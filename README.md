@@ -1,204 +1,251 @@
 # Realidi
 
-Social-first network for real-world experiences. Ho Chi Minh City first.
+Session brief for agents. Read this before exploring the tree.
 
-Realidi helps people answer: **where should I go based on how I want to feel, my time, budget, distance, and the real experiences of people who have actually been there?**
+Social-first network for **real-world experiences**, Ho Chi Minh City first.
+Product name in the UI is **Realidi**. Identifiers stay English. Primary copy is Vietnamese.
 
-This is not a TikTok clone, not Google Maps, not Tripadvisor, and not a generic AI itinerary planner.
+It is not TikTok, Google Maps, Tripadvisor, or a generic AI itinerary planner.
 
-Product name in the UI: **Realidi**. Code and identifiers stay in English. Primary copy is Vietnamese.
+**Git:** `origin` is https://github.com/kingrubic/realidi-production (`main`).
+Do not push to `vuta97/realidi`. That remote was removed on purpose.
+
+**Owner / operator:** VSC (software engineer). This checkout runs on a Mac Mini
+with Colima, LaunchAgents, and a Cloudflare tunnel aimed at the local web port.
+
+---
+
+## Current runtime state (read this first)
+
+The app is **mid-cutover** from Supabase to loopback self-hosted Convex.
+
+| Layer | Source of truth today |
+| --- | --- |
+| Login, signup, email OTP, reset, sessions, account deletion, profile provision, onboarding catalog, `/me` | **Convex Auth + `convex/profiles.ts` / `account.ts` / `sessions.ts`** |
+| Feed, places, search, messages, notifications, most `/admin` product data | **Still Supabase** (`lib/supabase/*`). Do **not** delete those modules. |
+| A Convex-only user on product pages | Empty lists. Home redirects to `/explore` when Supabase is unconfigured. |
+
+Migration plan (do not skip phases): `docs/plans/2026-09-03-supabase-to-local-convex.md`
+
+- **Phases 0–3: done.** Auth, profiles, onboarding, account security, Next.js cookie bridge.
+- **Phase 4+:** catalog, discovery, search, feed, then social/media/admin. Not started as the live data plane.
+
+Convex schema already defines the full domain (~52 tables) in `convex/schema.ts`.
+Public product queries are not all wired yet.
+
+---
 
 ## Product thesis
 
-Mood-based discovery + verified real-world experiences + structured experience data can help people choose places better than generic destination search, star ratings, or social-media hype.
+Mood-based discovery + verified visits + structured experience data should beat
+generic search, star ratings, and social hype.
 
-Core loop:
+Core loop: mood → discover → place → save / visit intent → visit → write
+experience → rate → verify → structured aggregates → better discovery.
 
-Select mood → Discover experiences → Open place → Save / visit intent → Visit → Create experience → Rate → Verify visit → Structured data → Better discovery.
+Optimize for useful decisions, not watch time, followers, or likes.
 
-Optimize for useful travel decisions, not watch time, followers, or likes.
+Primary metric: **Meaningful Discovery Rate** (open a place, then Save /
+Directions / Been There). Events go to `product_events` via `lib/analytics`.
+Do not scatter vendor SDKs in components.
 
-## Architecture
+---
+
+## Stack
+
+- Next.js **16.3** App Router (this is not the Next.js you remember — read
+  `node_modules/next/dist/docs/` before new APIs). Middleware is **`proxy.ts`**.
+- React 19 · TypeScript · Tailwind 4 · Zod
+- **Convex 1.45** self-hosted + `@convex-dev/auth` **0.0.95**
+- Leftover Supabase (`@supabase/ssr`) for product data
+- Vitest · Playwright · Colima Docker
+
+---
+
+## Directory map
 
 ```
-app/                 Next.js App Router (UI + SEO routes)
-components/          Design system primitives + shell
-features/            Domain modules (auth, discovery, places, experiences, verification, social, admin)
-lib/
-  supabase/          Browser, server, service-role clients
-  ranking/           Deterministic explainable ranking (no LLM)
-  geo/               Haversine, geofence, Mapbox adapter
-  analytics/         Provider interface (console | posthog | none) + first-party events
-  media/             Validation, compression, future video processing boundary
-  ai/                Empty future boundary — do not call an LLM for recommendations
-  i18n/              vi (default) + en dictionaries
-  validation/        Zod
-supabase/migrations  PostgreSQL + PostGIS + RLS
-supabase/seed.sql    HCMC editorial inventory
+app/                      Routes. (app) group = product chrome.
+app/ConvexClientProvider.tsx
+proxy.ts                  Convex Auth cookie refresh + /api/auth proxy (Next 16).
+features/auth/            Server actions (export names are frozen by contract tests).
+features/onboarding/
+lib/auth/session.ts       getSessionUser() via api.profiles.current + JWT cookie.
+lib/convex/               server.ts always passes token + NEXT_PUBLIC_CONVEX_URL.
+lib/supabase/             Still required for Phase 4+ product reads. Keep it.
+convex/                   Backend: auth, profiles, account, sessions, schema, seed.
+convex/_providers/        Forked Password + Email OTP (lockout, anti-enumeration).
+convex/_lib/              authz, geo, search helpers, uniqueness, audit.
+compose.convex.yml        Loopback backend :3222, site :3223, dashboard :6799, Mailpit.
+scripts/convex-*.sh       Local platform (up/health/admin key/auth env).
+scripts/realidi-*.sh      Mac Mini LaunchAgent entrypoints (web + Convex ensure).
+docs/plans/               Migration plan and phase gates.
+tests/convex/             Auth/authz/schema/seed/geo.
+tests/contracts/          Frozen routes, action names, auth-compat.
+e2e/auth-local.spec.ts    Signup → OTP → onboarding → reset → login → /me.
 ```
 
-Stack: Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · Zod · React Hook Form-ready · Supabase (Auth, Postgres, Storage, RLS) · PostGIS · Vitest · Playwright.
+---
 
-## Hypotheses the MVP can measure
+## Auth (do not regress)
 
-| ID | Hypothesis | Events |
+Cookies: `__convexAuthJWT` / `__convexAuthRefreshToken` (HttpOnly, Lax).
+Library sets them through **`useAuthActions().signIn()` → POST `/api/auth`**,
+which `proxy.ts` forwards. Writing cookies only from a server action +
+`redirect()` has already failed once; keep the official client sign-in path.
+
+Session: `lib/auth/session.ts`. `user.id` is the **Convex profile id**.
+`getSessionUser()` returns null if the JWT cannot be validated.
+
+JWT issuer is `http://127.0.0.1:3223`. The Convex container cannot fetch that
+host port. `site-loopback` in Compose (socat) forwards container
+`127.0.0.1:3223` → site `3211`. Without it, Next logs
+`AuthProviderDiscoveryFailed` and every signed-in RSC looks logged out.
+
+Vendored Password provider (`convex/_providers/Password.ts`):
+
+- 8 failures / 15 minutes lockout, including unknown emails
+- Reset/verify responses do not reveal whether the address exists
+- Mail is scheduled, not awaited
+- 8-digit OTP, 15 min, hashed, verify vs reset codes are not interchangeable
+- 3 code requests / 15 min / purpose (`auth_code_requests`)
+
+`@convex-dev/auth` 0.0.95 does not do lockout or anti-enumeration by itself.
+`tests/contracts/convex-auth-compatibility.test.ts` pins the fork. Re-check
+that file before upgrading the package.
+
+Callbacks in `convex/auth.ts`:
+
+- `afterUserCreatedOrUpdated` → `provisionProfile` (profile + prefs + default collection)
+- `beforeSessionCreation` blocks deleted / banned / suspended
+- Unverified users may hold a session; `requireVerifiedProfile` blocks product writes
+
+Auth action **export names** in `features/auth/actions.ts` are frozen by
+`tests/contracts/route-surface.test.ts`. `/auth/callback` must keep existing
+as a file (it now just redirects expired).
+
+Presence still used to call Supabase from the client. `PresenceProvider`
+must no-op when Supabase env is empty, or signed-in Convex users crash the
+app error boundary.
+
+Google OAuth is out of scope. `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false`.
+
+Details: `AUTH_ADMIN.md`.
+
+---
+
+## Ports (this Mac Mini)
+
+Planned plan ports `3220`/`3221`/`6792` are taken by SSH. Used instead:
+
+| Bind | What | Cloudflare? |
 | --- | --- | --- |
-| H1 | Mood discovery produces stronger save/visit intent than category search | `mood_selected`, `discovery_viewed`, `place_opened`, `place_saved`, `directions_clicked` |
-| H2 | Verified content creates more trust and intent than unverified | `verification_*`, save uplift vs `verification_status` |
-| H3 | Structured attributes beat a generic star | experience metrics + place aggregates, not a single rating |
+| `127.0.0.1:3020` | Next.js production (`next start`) | **Yes — tunnel this** |
+| `127.0.0.1:3222` | Convex backend | No (loopback) |
+| `127.0.0.1:3223` | Convex HTTP / OIDC / JWKS | No |
+| `127.0.0.1:6799` | Convex dashboard | No |
+| `127.0.0.1:8026` | Mailpit UI | No |
+| `127.0.0.1:1026` | Mailpit SMTP on host (container 1025) | No |
 
-Primary metric: **Meaningful Discovery Rate** — share of discovery sessions that open a place and then Save, Directions, or Been There.
+`3000` is **another project** (`bemi-agent-world`). Do not steal it.
 
-North-star candidate: Save → Verified Visit conversion.
+`NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3222` is baked into the Next build.
+A visitor hitting only a public Next URL still cannot reach Convex unless
+`3222`/`3223` are also tunneled and the public Convex URLs are rebuilt.
 
-Events are written to `product_events` (first-party) and optionally forwarded through `lib/analytics`. Do not scatter vendor SDKs in components.
+Docker via **Colima**: `DOCKER_HOST=unix:///Users/vsc_agent/.colima/default/docker.sock`.
 
-## Local setup
+---
+
+## Mac Mini process supervision
+
+LaunchAgents (user `vsc_agent`, need that user logged in):
+
+- `~/Library/LaunchAgents/ai.realidi.convex.plist` → `scripts/realidi-convex-ensure.sh`
+  (start/restart Colima + `compose.convex.yml`)
+- `~/Library/LaunchAgents/ai.realidi.web.plist` → `scripts/realidi-web.sh`
+  (`next start --hostname 127.0.0.1 --port 3020`)
+
+Logs: `~/.openclaw/logs/ai.realidi.web.log` and `ai.realidi.convex.log`.
+
+After code change:
 
 ```bash
-cp .env.example .env.local
-# Fill the current Supabase values for the web application.
+npm run build
+launchctl kickstart -k gui/$(id -u)/ai.realidi.web
+```
+
+Local one-shot (without launchd):
+
+```bash
+cp .env.example .env.local   # then fill ignored secrets
 npm install
 ./scripts/convex-local.sh up
 ./scripts/convex-admin-key.sh
-./scripts/convex-health.sh
+./scripts/convex-auth-env.sh
+npm run convex:deploy:local
+npm run convex:seed
+npm run build
+npm start -- --hostname 127.0.0.1 --port 3020
+# or: npm run dev -- --port 3020
 ```
 
-The repository-scoped self-hosted Convex backend, HTTP actions, dashboard, and
-Mailpit bind only to loopback. On this workstation, existing SSH listeners
-occupy the planned `3220`, `3221`, and `6792` range, so the tested endpoints are
-`3222`, `3223`, and `6799`; Mailpit remains on `1026`/`8026`. The Compose file
-uses pinned images and persistent named volumes. A `site-loopback` sidecar
-forwards container-localhost `:3223` to the site process so the backend can
-discover its own JWKS at the host issuer URL.
+Never commit `.env.local`. It holds `CONVEX_SELF_HOSTED_ADMIN_KEY`.
 
-Run `npm run dev` separately only when you need the web app. Phases 0–2 provide
-the local Convex platform/schema/seed foundation, and the Phase 3 authentication
-backend is now implemented and deployed: registration, sign-in with the
-persistent 8-attempt lockout, email verification, password reset, authenticated
-password change, and current/other/all session revocation. The missing lockout
-and anti-enumeration hooks in `@convex-dev/auth` 0.0.95 are covered by the
-vendored provider in `convex/_providers/Password.ts`.
+---
 
-The web application now uses that Convex auth backend for login, signup,
-verification, password reset, password change, session revocation, profile
-edit, onboarding, and account gates. Product reads (feed, places, messages)
-still go through Supabase until Phase 4; a signed-in Convex user will see
-empty product data there. See `AUTH_ADMIN.md` for the function surface.
+## Roles and gates
 
-`./scripts/convex-local.sh down` stops containers without deleting data. Volume
-removal is intentionally manual and destructive:
+Roles: `user`, `creator`, `moderator`, `editor`, `admin`, `owner`.
+Hiding a button is not authorization. Convex uses `convex/_lib/authz.ts`
+(`requireIdentity`, `requireVerifiedProfile`, capability helpers).
+Staff UI is `/admin`. First owner: `INITIAL_OWNER_EMAIL` compared
+server-side once; writes `owner.bootstrap` audit. Last owner cannot be
+demoted/deleted.
 
-```bash
-docker compose -f compose.convex.yml down --volumes
-```
+Account gates: `ok` | `unverified` | `suspended` | `banned` | `deleted`.
 
-## Local backend
+---
 
-Convex is the target application data plane. Editorial taxonomy and all 22 HCMC
-places are seeded from the authoritative SQL inventory with `npm run
-convex:seed`; the operation is idempotent. Optional social/demo data requires
-explicit credentials in ignored local environment variables. No demo password
-is stored in the repository.
+## Domain rules that must not drift
 
-Google OAuth is intentionally out of scope for the local migration.
+- Guests can browse discover/search/public places and published posts.
+- Followers-only / private / hidden content stays gated.
+- Ranking is deterministic (`lib/ranking`): mood 45, trust 20, freshness 15,
+  proximity 10, quality engagement 10. No LLM. No watch-time / follower inputs.
+- Places store `latitude_e6` / `longitude_e6`. One Haversine helper. Visit
+  verification stores distance + accuracy + result, never raw GPS.
+- Moods are DB taxonomy (`desired_feeling`, `current_state`), not hardcoded.
+- `lib/ai/` is an empty boundary. Do not call an LLM for recommendations.
+- Launch city HCMC, VND, `Asia/Ho_Chi_Minh`.
 
-### Mapbox
+---
 
-Set `NEXT_PUBLIC_MAPBOX_TOKEN` for the interactive map. Directions always open an external maps URL. If the token is missing, Realidi hides Map from primary navigation and does not fake a map.
-
-## Environment variables
-
-See `.env.example`. Never commit secrets. Never put `SUPABASE_SERVICE_ROLE_KEY` in client code.
-
-## Database
-
-UUID keys, FKs, spatial index on `places.location`, trigram search on names, RLS on every exposed table.
-
-Moods are **database-driven** (`moods` with layers `desired_feeling` and `current_state`). Experience styles are a separate taxonomy. Admin can create/edit/activate/reorder.
-
-Places are a canonical entity with provider fields (`external_provider`, `external_provider_id`) but no tight coupling to Mapbox or Google. Status includes `merged` for future duplicate handling.
-
-Aggregates (`place_mood_stats`, `place_experience_stats`, `place_crowd_stats`, `place_cost_stats`) are refreshed by `refresh_place_aggregates` — not computed on every page load. Low-n data shows **Tín hiệu sớm**, never `92.37%`.
-
-Future tables exist as stubs: `travel_dna_profiles`, `creator_reputation`.
-
-## Ranking
-
-Deterministic. Default weights (admin-editable in `/admin/ranking`, stored in `ranking_config`):
-
-- 45% mood match (Bayesian-smoothed)
-- 20% trust (verified ratio + verified volume)
-- 15% freshness
-- 10% proximity (neutral 0.5 if no location)
-- 10% quality engagement: Save > Been There > Share > Like
-
-Watch time and follower count are not inputs. Documented in `lib/ranking/ALGORITHM.md`. Covered by `tests/ranking.test.ts`.
-
-## Verification
-
-On-site geofence. Default radius 150 m (configurable). The client sends coordinates once; the server computes distance, stores **distance + accuracy + result**, and discards raw GPS. Unverified is labelled “Trải nghiệm chưa xác minh”, never “fake”.
-
-Covered by `tests/geo.test.ts`.
-
-## Auth and roles
-
-One identity. Roles: `user`, `creator`, `moderator`, `admin`. Authorization is RLS + server actions (`lib/auth/roles.ts`). Hiding a button is not access control. Staff UI is `/admin`.
-
-## Routes
-
-| Path | Notes |
-| --- | --- |
-| `/discover` | Mood home |
-| `/search` | Place + category search |
-| `/place/[slug]` | Experience intelligence page, SEO |
-| `/create` | 4-step experience composer |
-| `/saved` | Default collection (schema-ready for future lists) |
-| `/experience/[id]` | Public experience, SEO |
-| `/user/[username]` | Profile |
-| `/onboarding` | 5–6 skippable questions, never forced on guests |
-| `/login` `/signup` `/reset-password` | Auth |
-| `/admin/*` | Staff |
-
-## Testing
+## Tests (do not weaken to match a broken backend)
 
 ```bash
-npm run test        # unit: ranking, geo, authz, validation
+npm run test          # 168 unit tests last green (contracts + convex + ranking/geo)
 npm run typecheck
-npm run lint
-npm run test:e2e    # Playwright; full user/admin flows need E2E_* env vars
+npm run lint          # generated convex/_generated may warn; 0 errors required
+npm run build
+npx playwright test e2e/auth-local.spec.ts
 ```
 
-## Deployment
+Auth e2e talks to Mailpit at `http://127.0.0.1:8026`. Guest discover e2e still
+expects Supabase home data and will fail without it.
 
-Deploy the Next.js app (Vercel or similar) with the same env vars. Point `APP_URL` and `NEXT_PUBLIC_APP_URL` at the production origin (not a temporary Cloudflare hostname). Apply migrations to the production Supabase project before first traffic. See `AUTH_ADMIN.md` for Owner bootstrap, email, OAuth, and the post-deploy checklist.
+---
 
-## Admin access
+## Agent conventions
 
-`/admin` is denied unless `profiles.role` is `moderator`, `editor`, `admin`, or `owner`. Bootstrap the first Owner with `INITIAL_OWNER_EMAIL` (see `AUTH_ADMIN.md`).
+- Next.js 16: `proxy.ts`, not `middleware.ts`.
+- Prefer existing design system and Vietnamese UI copy.
+- Do not delete `lib/supabase/*` or product routes “to finish Convex”.
+- Do not invent demo passwords or commit keys.
+- Do not force-push `main`.
+- After UI changes, verify in a browser or Playwright, not a single screenshot.
 
-## Project principles
+## Intentionally not in the MVP
 
-1. Decision value > engagement vanity.
-2. Verified does not mean unverified is fake.
-3. Mood is a discovery input, not a diagnosis.
-4. Structured data beats another content format.
-5. Do not sell organic ranking.
-6. Trust stays visible when monetization arrives later.
-7. AI is a future intelligence layer, not the product.
-8. High-confidence data ranks above high-volume hype.
-9. Density before geographic coverage (HCMC first).
-10. Build the data flywheel before advanced AI.
-
-## Intentionally not in this MVP
-
-Travel DNA UI, Travel Match Score, AI place recommendation, conversational search, trip planner, live assistant, buddy matching, group planner, Wrapped, creator marketplace, booking, sponsored placement, public creator leaderboards.
-
-`lib/ai/` exists so those features cannot accidentally become “ask ChatGPT where to go.” They must be grounded in Realidi’s proprietary graph when enabled via feature flags.
-
-## Assumptions
-
-- Launch city: Ho Chi Minh City. Currency VND. Timezone `Asia/Ho_Chi_Minh`.
-- Cover photos in seed data are Unsplash editorial placeholders until `place-media` uploads exist.
-- Draft experience media is in a public bucket with unguessable paths; private signed URLs can replace this later.
-- Rate limits are in-memory per instance (good enough for MVP; swap for Redis at scale).
+Travel DNA UI, AI place recs, trip planner, buddy matching, booking, sponsored
+ranking, public creator leaderboards.
