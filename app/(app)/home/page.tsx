@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
 import { getDesiredMoods } from "@/features/mood/queries";
 import { getFeedPage, getPlacesLite, getSuggestedPeople } from "@/features/feed/queries";
 import { FeedSwitcher } from "@/features/feed/components/FeedSwitcher";
@@ -7,7 +6,6 @@ import { MoodStrip } from "@/features/feed/components/MoodStrip";
 import { PostComposer } from "@/features/feed/components/PostComposer";
 import { HomeFeed } from "@/features/feed/components/HomeFeed";
 import { getSessionUser } from "@/lib/auth/session";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { recordProductEvent } from "@/features/social/actions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getPublishedFeaturedPlaces } from "@/features/curation/queries";
@@ -33,7 +31,6 @@ async function HomeInner({
   const params = await searchParams;
   const tab = params.tab === "following" ? "following" : "for_you";
   const moodId = typeof params.mood === "string" ? params.mood : null;
-  if (!isSupabaseConfigured()) redirect("/explore");
 
   const [session, moods, places, feed, suggested, featured] = await Promise.all([
     getSessionUser().catch(() => null),

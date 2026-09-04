@@ -1,7 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { convexMutation } from "@/lib/convex/server";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { requireUser } from "@/lib/auth/session";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { recordInterestSignal } from "@/lib/signals";
@@ -15,6 +19,7 @@ export async function recordProductEvent(
   properties: Record<string, string | number | boolean | null | undefined> = {},
   sessionId?: string | null,
 ) {
+  if (!isSupabaseConfigured()) return;
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -53,41 +58,22 @@ export async function toggleSavePlace(placeId: string, intent: SaveIntent = "sav
   if (!rateLimit(`save:${user.id}`, 40)) {
     throw new Error("RATE_LIMIT");
   }
-  const supabase = await createServerSupabase();
-  const { data: existing } = await supabase
-    .from("saves")
-    .select("id, intent")
-    .eq("user_id", user.id)
-    .eq("place_id", placeId)
-    .maybeSingle();
-  if (existing) {
-    if (existing.intent === intent) {
-      await supabase.from("saves").delete().eq("id", existing.id);
-      await recordProductEvent("place_unsaved", { place_id: placeId });
-      revalidatePath("/saved");
-      return { saved: false, intent: null as SaveIntent | null };
-    }
-    await supabase.from("saves").update({ intent }).eq("id", existing.id);
-    if (intent === "want_to_go") await recordProductEvent("saved_place", { place_id: placeId, intent: "want_to_go" });
-    revalidatePath("/saved");
-    return { saved: true, intent };
-  }
-  const { data: collection } = await supabase
-    .from("saved_collections")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("is_default", true)
-    .maybeSingle();
-  await supabase.from("saves").insert({
-    user_id: user.id,
-    place_id: placeId,
-    collection_id: collection?.id ?? null,
+  const result = await convexMutation(api.places.toggleSave, {
+    placeId: placeId as Id<"places">,
     intent,
   });
-  await recordProductEvent("place_saved", { place_id: placeId, intent });
-  await recordProductEvent("saved_place", { place_id: placeId, intent });
+  try {
+    if (!result.saved) await recordProductEvent("place_unsaved", { place_id: placeId });
+    else if (intent === "want_to_go") await recordProductEvent("saved_place", { place_id: placeId, intent: "want_to_go" });
+    else {
+      await recordProductEvent("place_saved", { place_id: placeId, intent });
+      await recordProductEvent("saved_place", { place_id: placeId, intent });
+    }
+  } catch {
+    // Product analytics still writes through the leftover Supabase path.
+  }
   revalidatePath("/saved");
-  return { saved: true, intent };
+  return { saved: result.saved, intent: result.intent as SaveIntent | null };
 }
 
 export async function toggleBeenThere(placeId: string) {

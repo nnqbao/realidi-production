@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api } from "@/convex/_generated/api";
-import { createServerSupabase } from "@/lib/supabase/server";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
-import { convexQuery } from "@/lib/convex/server";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { Button } from "@/components/ui/button";
 import { FollowButton } from "@/features/social/follow-button";
@@ -11,13 +9,17 @@ import { MessageButton } from "@/features/messages/message-button";
 import { ShareSheet } from "@/features/share/share-sheet";
 import { EmptyState } from "@/components/states";
 import { ExperiencePost } from "@/features/feed/components/ExperiencePost";
-import { getFeedPostsByAuthor, getFollowCounts, getSavedPosts } from "@/features/feed/queries";
+import {
+  getFeedPostsByAuthor,
+  getFollowCounts,
+  getSavedPosts,
+  isFollowingUser,
+} from "@/features/feed/queries";
 import { recordProductEvent } from "@/features/social/actions";
 import { ProfileIdentity } from "@/features/profile/profile-identity";
 import { formatCity, formatDistrict } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { Metadata } from "next";
-import type { Profile } from "@/types/database";
 
 export async function generateMetadata({
   params,
@@ -37,61 +39,17 @@ export default async function UserPage({
 }) {
   const { username } = await params;
   const { tab = "posts" } = await searchParams;
-  const convexPerson = await convexQuery(api.profiles.publicProfile, { username }).catch(() => null);
-  if (convexPerson) {
-    const session = await getSessionUser().catch(() => null);
-    const isMe = session?.profile.username === convexPerson.username;
-    return (
-      <div className="px-4 py-4">
-        <header className="flex items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <ProfileIdentity
-              person={{
-                id: convexPerson.id,
-                display_name: convexPerson.displayName,
-                username: convexPerson.username,
-                avatar_path: convexPerson.avatarUrl,
-                bio: convexPerson.bio ?? null,
-                home_city: convexPerson.homeCity ?? null,
-              }}
-            />
-          </div>
-          {isMe ? (
-            <Button asChild variant="outline">
-              <Link href="/profile/edit">Sửa hồ sơ</Link>
-            </Button>
-          ) : null}
-        </header>
-        <EmptyState className="mt-6" title="Chưa có bài viết công khai" />
-      </div>
-    );
-  }
-  if (!isSupabaseConfigured()) notFound();
-  const supabase = await createServerSupabase();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("username", username)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (!profile) notFound();
-  const person = profile as Profile;
-  const session = await getSessionUser().catch(() => null);
-  const isMe = session?.user.id === person.id;
-  await recordProductEvent("profile_opened", { profile_id: person.id });
+  const person = await convexQueryAuthed(api.profiles.publicProfile, { username }).catch(() => null);
+  if (!person) notFound();
 
-  const [posts, counts, { data: following }, { data: prefs }, saved] = await Promise.all([
+  const session = await getSessionUser().catch(() => null);
+  const isMe = session?.profile.username === person.username;
+  await recordProductEvent("profile_opened", { profile_id: person.id }).catch(() => undefined);
+
+  const [posts, counts, following, saved] = await Promise.all([
     getFeedPostsByAuthor(person.id),
     getFollowCounts(person.id),
-    session
-      ? supabase
-          .from("follows")
-          .select("follower_id")
-          .eq("follower_id", session.user.id)
-          .eq("following_id", person.id)
-          .maybeSingle()
-      : Promise.resolve({ data: null }),
-    supabase.from("user_preferences").select("preferred_mood_ids").eq("user_id", person.id).maybeSingle(),
+    session && !isMe ? isFollowingUser(person.id) : Promise.resolve(false),
     isMe ? getSavedPosts() : Promise.resolve([]),
   ]);
 
@@ -111,14 +69,20 @@ export default async function UserPage({
     <div className="px-4 py-4">
       <header className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
-          <ProfileIdentity person={person} />
+          <ProfileIdentity
+            person={{
+              id: person.id,
+              display_name: person.displayName,
+              username: person.username,
+              avatar_path: person.avatarUrl,
+              bio: person.bio ?? null,
+              home_city: person.homeCity ?? null,
+            }}
+          />
           <p className="mt-3 text-sm">
             <strong>{posts.length}</strong> bài viết · <strong>{counts.followers}</strong> người theo dõi ·{" "}
             <strong>{counts.following}</strong> đang theo dõi · <strong>{verified.length}</strong> đã xác minh
           </p>
-          {prefs?.preferred_mood_ids?.length ? (
-            <p className="mt-2 text-xs text-muted-foreground">Phong cách thường chia sẻ đã lưu trong hồ sơ.</p>
-          ) : null}
         </div>
         {isMe ? (
           <Button asChild variant="outline">
@@ -126,7 +90,7 @@ export default async function UserPage({
           </Button>
         ) : session ? (
           <div className="flex flex-wrap gap-2">
-            <FollowButton userId={person.id} initial={Boolean(following)} />
+            <FollowButton userId={person.id} initial={following} />
             <MessageButton userId={person.id} />
             <ShareSheet
               path={`/user/${person.username}`}

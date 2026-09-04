@@ -64,6 +64,13 @@ export async function convexQuery<Fn extends QueryRef>(
   });
 }
 
+export async function convexQueryAuthed<Fn extends QueryRef>(
+  fn: Fn,
+  args: Fn["_args"],
+): Promise<FunctionReturnType<Fn>> {
+  return await convexQuery(fn, args, await convexToken());
+}
+
 export async function convexMutation<Fn extends MutationRef>(
   fn: Fn,
   args: Fn["_args"],

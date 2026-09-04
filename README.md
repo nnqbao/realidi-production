@@ -22,16 +22,13 @@ The app is **mid-cutover** from Supabase to loopback self-hosted Convex.
 | Layer | Source of truth today |
 | --- | --- |
 | Login, signup, email OTP, reset, sessions, account deletion, profile provision, onboarding catalog, `/me` | **Convex Auth + `convex/profiles.ts` / `account.ts` / `sessions.ts`** |
-| Feed, places, search, messages, notifications, most `/admin` product data | **Still Supabase** (`lib/supabase/*`). Do **not** delete those modules. |
-| A Convex-only user on product pages | Empty lists. Home redirects to `/explore` when Supabase is unconfigured. |
+| Catalog, discovery, search, place pages, map pins, home/explore feed reads, saved places | **Convex** (`convex/catalog.ts`, `places.ts`, `discovery.ts`, `search.ts`, `curation.ts`, `feed.ts`, `flags.ts`) |
+| Writes for experiences, social graph, verification, media, messages, most `/admin` | **Still Supabase** (`lib/supabase/*`). Do **not** delete those modules. |
 
 Migration plan (do not skip phases): `docs/plans/2026-09-03-supabase-to-local-convex.md`
 
-- **Phases 0–3: done.** Auth, profiles, onboarding, account security, Next.js cookie bridge.
-- **Phase 4+:** catalog, discovery, search, feed, then social/media/admin. Not started as the live data plane.
-
-Convex schema already defines the full domain (~52 tables) in `convex/schema.ts`.
-Public product queries are not all wired yet.
+- **Phases 0–4: done.** Auth plus public catalog/discovery/search/feed reads.
+- **Phase 5+:** experiences, social, verification, media, then messaging/admin.
 
 ---
 
@@ -57,7 +54,7 @@ Do not scatter vendor SDKs in components.
   `node_modules/next/dist/docs/` before new APIs). Middleware is **`proxy.ts`**.
 - React 19 · TypeScript · Tailwind 4 · Zod
 - **Convex 1.45** self-hosted + `@convex-dev/auth` **0.0.95**
-- Leftover Supabase (`@supabase/ssr`) for product data
+- Leftover Supabase (`@supabase/ssr`) for Phase 5+ writes and admin
 - Vitest · Playwright · Colima Docker
 
 ---
@@ -72,17 +69,18 @@ features/auth/            Server actions (export names are frozen by contract te
 features/onboarding/
 lib/auth/session.ts       getSessionUser() via api.profiles.current + JWT cookie.
 lib/convex/               server.ts always passes token + NEXT_PUBLIC_CONVEX_URL.
-lib/supabase/             Still required for Phase 4+ product reads. Keep it.
-convex/                   Backend: auth, profiles, account, sessions, schema, seed.
+lib/supabase/             Still required for Phase 5+ writes and admin. Keep it.
+convex/                   Backend: auth, profiles, catalog, places, discovery, search, feed.
 convex/_providers/        Forked Password + Email OTP (lockout, anti-enumeration).
-convex/_lib/              authz, geo, search helpers, uniqueness, audit.
+convex/_lib/              authz, geo, search, ranking copies, uniqueness, audit.
 compose.convex.yml        Loopback backend :3222, site :3223, dashboard :6799, Mailpit.
 scripts/convex-*.sh       Local platform (up/health/admin key/auth env).
 scripts/realidi-*.sh      Mac Mini LaunchAgent entrypoints (web + Convex ensure).
 docs/plans/               Migration plan and phase gates.
-tests/convex/             Auth/authz/schema/seed/geo.
+tests/convex/             Auth/authz/schema/seed/geo/catalog/discovery/feed/search.
 tests/contracts/          Frozen routes, action names, auth-compat.
 e2e/auth-local.spec.ts    Signup → OTP → onboarding → reset → login → /me.
+e2e/guest-discover.spec.ts Guest /home + /explore after Phase 4.
 ```
 
 ---
@@ -224,15 +222,15 @@ Account gates: `ok` | `unverified` | `suspended` | `banned` | `deleted`.
 ## Tests (do not weaken to match a broken backend)
 
 ```bash
-npm run test          # 168 unit tests last green (contracts + convex + ranking/geo)
+npm run test          # 178 unit tests last green (contracts + convex + ranking/geo)
 npm run typecheck
 npm run lint          # generated convex/_generated may warn; 0 errors required
 npm run build
-npx playwright test e2e/auth-local.spec.ts
+npx playwright test e2e/auth-local.spec.ts e2e/guest-discover.spec.ts
 ```
 
-Auth e2e talks to Mailpit at `http://127.0.0.1:8026`. Guest discover e2e still
-expects Supabase home data and will fail without it.
+Auth e2e talks to Mailpit at `http://127.0.0.1:8026`. Guest discover e2e
+hits `/home` and `/explore` on Convex reads (empty feed chrome is enough).
 
 ---
 

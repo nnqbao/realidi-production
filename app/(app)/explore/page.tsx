@@ -12,7 +12,6 @@ import { getSessionUser } from "@/lib/auth/session";
 import { localizeName, vi } from "@/lib/i18n";
 import { recordProductEvent } from "@/features/social/actions";
 import { buildExploreShelves } from "@/lib/discovery/shelves";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
 import Link from "next/link";
 import type { RankedPlaceCard } from "@/features/discovery/queries";
 import { cn } from "@/lib/utils";
@@ -33,7 +32,6 @@ export default async function ExplorePage({
 
 async function loadExplore(params: Record<string, string | string[] | undefined>) {
   const moodId = typeof params.mood === "string" ? params.mood : null;
-  if (!isSupabaseConfigured()) return { ok: false as const, reason: "unconfigured" as const };
   try {
     const [moods, selected, session, people, featured] = await Promise.all([
       getDesiredMoods(),

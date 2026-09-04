@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { getDesiredMoods, getCategories } from "@/features/mood/queries";
 import { MoodPicker } from "@/features/discovery/mood-picker";
 import { getSessionUser } from "@/lib/auth/session";
@@ -13,46 +14,13 @@ import type { Mood, PlaceCategory } from "@/types/database";
 
 async function loadMap(mood?: string, category?: string) {
   await getSessionUser().catch(() => null);
-  const supabase = await createServerSupabase();
-  const [moods, categories] = await Promise.all([
+  const [moods, categories, pins] = await Promise.all([
     getDesiredMoods().catch(() => []),
     getCategories().catch(() => []),
+    convexQueryAuthed(api.places.mapPins, { moodId: mood, categoryId: category }).catch(() => []),
   ]);
 
-  let placeQuery = supabase
-    .from("places")
-    .select("id, slug, name, district, latitude, longitude, cover_image_path, category_id")
-    .eq("status", "active")
-    .not("latitude", "is", null)
-    .order("editorial_score", { ascending: false })
-    .limit(40);
-
-  if (category) placeQuery = placeQuery.eq("category_id", category);
-
-  let { data: places } = await placeQuery;
-  if (mood && places?.length) {
-    const { data: moodLinks } = await supabase.from("place_moods").select("place_id").eq("mood_id", mood);
-    const allowed = new Set((moodLinks ?? []).map((row) => row.place_id));
-    places = places.filter((p) => allowed.has(p.id));
-  }
-
-  const pins: MapPlacePin[] = (places ?? []).flatMap((place) =>
-    place.latitude != null && place.longitude != null
-      ? [
-          {
-            id: place.id,
-            slug: place.slug,
-            name: place.name,
-            district: place.district,
-            latitude: place.latitude,
-            longitude: place.longitude,
-            cover_image_path: place.cover_image_path,
-          },
-        ]
-      : [],
-  );
-
-  return { moods, categories, pins, token: getMapProvider().publicToken() };
+  return { moods, categories, pins: pins as MapPlacePin[], token: getMapProvider().publicToken() };
 }
 
 export default async function MapPage({
