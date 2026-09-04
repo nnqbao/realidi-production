@@ -2,9 +2,22 @@ import type { NextConfig } from "next";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const supabaseHost = process.env.NEXT_PUBLIC_SUPABASE_URL
-  ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
-  : null;
+function convexSitePattern() {
+  const raw = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
+  if (!raw) return [];
+  try {
+    const url = new URL(raw);
+    return [
+      {
+        protocol: (url.protocol === "https:" ? "https" : "http") as "http" | "https",
+        hostname: url.hostname,
+        ...(url.port ? { port: url.port } : {}),
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
 
 const nextConfig: NextConfig = {
   distDir: ".next",
@@ -17,7 +30,7 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
-      ...(supabaseHost ? [{ protocol: "https" as const, hostname: supabaseHost }] : []),
+      ...convexSitePattern(),
     ],
   },
 };

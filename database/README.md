@@ -1,13 +1,11 @@
-Convex Phases 0–2 provide the local migration foundation:
+Convex is the application data plane.
 
 - `convex/schema.ts` — domain tables, validators, and indexes
 - `convex/seed.ts` — idempotent taxonomy, configuration, and 22-place seed
 - `compose.convex.yml` — persistent loopback-only backend
 
-The application has not cut over: SQL migrations and `supabase/seed.sql`
-remain the current Supabase runtime source as well as parity evidence. The
-Convex schema/seed can be deployed and verified independently without creating
-a hybrid application data path.
+`database/supabase-archive/` is historical SQL only. No script or package
+command may run it.
 
 ```bash
 ./scripts/convex-local.sh up

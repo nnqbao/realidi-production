@@ -47,9 +47,9 @@ const STORAGE_POLICIES = {
 describe("backend surface contract", () => {
   it("freezes all 52 active domain tables", () => {
     expect(TABLES).toHaveLength(52);
-    const source = readFileSync("types/database.ts", "utf8");
+    const source = readFileSync("convex/schema.ts", "utf8");
     for (const table of TABLES) {
-      expect(source).toMatch(new RegExp(`\\n\\s+${table}: TableDef<`));
+      expect(source).toMatch(new RegExp(`\\n\\s+${table}: defineTable\\(`));
     }
   });
 

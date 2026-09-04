@@ -1,8 +1,8 @@
 # Authentication and Admin Console
 
-The web application now authenticates through **Convex Auth** (HTTP-only
-cookies `__convexAuthJWT` / `__convexAuthRefreshToken`). Supabase clients remain
-only for product data that Phase 4+ has not moved yet.
+The web application authenticates through **Convex Auth** (HTTP-only
+cookies `__convexAuthJWT` / `__convexAuthRefreshToken`). Convex is the only
+application data plane.
 
 `@convex-dev/auth` 0.0.95 cannot meet two of the requirements on its own: its
 Password provider has no failed-credential callback for a persistent lockout,
@@ -41,12 +41,12 @@ inside the backend container so JWT validation does not fail with
 
 ## First Owner
 
-1. Create a user via `/signup` (or invite in Supabase Auth).
+1. Create a user via `/signup`.
 2. Set `INITIAL_OWNER_EMAIL` to that user’s email.
 3. Sign in once. If no owner row exists, the profile is promoted to `owner`.
 4. Unset or rotate the env var after bootstrap if you prefer.
 
-On Convex the comparison happens server-side inside the profile provisioning
+The comparison happens server-side inside the profile provisioning
 transaction against the address held by the auth account, never against
 client-supplied metadata, and it is skipped entirely once any owner exists.
 The promotion writes an `owner.bootstrap` audit row.
@@ -54,10 +54,6 @@ The promotion writes an `owner.bootstrap` audit row.
 Never commit that email into source. Do not hard-code demo passwords.
 
 ## Email
-
-For the Supabase runtime, configure SMTP in the Supabase Auth dashboard;
-confirmation and reset links must use the Site URL / redirect URLs matching
-`APP_URL`.
 
 The Convex backend sends through `SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`, which
 point at the Mailpit container locally. Read delivered mail at
@@ -69,8 +65,7 @@ Code requests are throttled to 3 per address per 15 minutes per purpose
 (`auth_code_requests`) so the endpoints cannot be used to flood an inbox. A
 throttled request returns the same success shape as an accepted one.
 
-Google OAuth is out of scope for the local Convex migration. The current
-Supabase flag remains dormant until a completed final cutover removes it.
+Google OAuth is out of scope. `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false`.
 
 ## Session
 
@@ -96,13 +91,12 @@ except the one that performed it.
 | `moderator` | Reports, posts, comments |
 | `user` / `creator` | Product only |
 
-Checks run in server actions and `/admin` layout. Frontend hiding is not sufficient.
+Checks run in Convex (`convex/_lib/authz.ts`) and `/admin` layout. Frontend hiding is not sufficient.
 
 ## Deploy checklist
 
 - [ ] `APP_URL` and `NEXT_PUBLIC_APP_URL` are the real production origin
-- [ ] Supabase migrations 00013 and 00014 applied for the current runtime
-- [ ] Self-hosted Convex foundation healthy and functions deployed
+- [ ] Self-hosted Convex healthy and functions deployed
 - [ ] `INITIAL_OWNER_EMAIL` used once, then reviewed
 - [ ] SMTP + email confirmations on
 - [ ] Google OAuth remains disabled

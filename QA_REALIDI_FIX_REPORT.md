@@ -1,5 +1,9 @@
 # Realidi QA fix report — final pass
 
+> Historical. This document records a pre-cutover Supabase runtime.
+> Do not treat the commands, env vars, or Realtime notes below as current
+> operations. The live stack is local self-hosted Convex. See `README.md`.
+
 Date: 2026-08-31  
 Stack: Next.js 16.3.3 App Router, React 19, Supabase (Postgres + Realtime + Storage), Vitest, npm.
 

@@ -32,7 +32,7 @@ async function track(
   try {
     await recordProductEvent(eventName, properties);
   } catch {
-    // Product analytics still writes through the leftover Supabase path.
+    // Analytics must not fail the user-facing write.
   }
 }
 

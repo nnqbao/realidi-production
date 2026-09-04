@@ -16,8 +16,7 @@
     "convex:codegen": "convex codegen",
     "convex:deploy:local": "convex deploy --yes",
     "convex:seed": "convex run seed:run",
-    "convex:verify": "convex run seed:status",
-    "seed": "tsx scripts/seed-demo.ts"
+    "convex:verify": "convex run seed:status"
   },
   "dependencies": {
     "@auth/core": "0.41.1",
@@ -39,8 +38,6 @@
     "@radix-ui/react-tabs": "^1.1.21",
     "@radix-ui/react-tooltip": "^1.2.16",
     "@radix-ui/react-visually-hidden": "^1.2.11",
-    "@supabase/ssr": "^0.12.5",
-    "@supabase/supabase-js": "^2.112.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "1.45.0",

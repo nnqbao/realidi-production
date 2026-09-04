@@ -25,11 +25,8 @@ export function validateMediaFile(
   return { ok: true };
 }
 
-export function publicStorageUrl(bucket: MediaBucket, path: string): string {
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!base) return path;
-  return `${base}/storage/v1/object/public/${bucket}/${path}`;
+export function publicStorageUrl(_bucket: MediaBucket, path: string): string {
+  return path;
 }
 
 export function mediaSrc(path: string | null | undefined, bucket: MediaBucket = "place-media"): string | null {

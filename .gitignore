@@ -49,7 +49,7 @@ convex-export/
 convex-exports/
 local-evidence/
 
-# local supabase runtime
+# leftover local supabase CLI state if a checkout still has it
 supabase/.temp/
 supabase/.branches/
 

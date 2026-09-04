@@ -17,7 +17,8 @@ with Colima, LaunchAgents, and a Cloudflare tunnel aimed at the local web port.
 
 ## Current runtime state (read this first)
 
-The app is **mid-cutover** from Supabase to loopback self-hosted Convex.
+The app is **Convex-only**. Historical SQL lives under `database/supabase-archive/`
+and is not a runtime.
 
 | Layer | Source of truth today |
 | --- | --- |
@@ -27,10 +28,9 @@ The app is **mid-cutover** from Supabase to loopback self-hosted Convex.
 | Messages, reactions, invites, blocks, presence, typing | **Convex** (`convex/messages.ts`, `presence.ts`, `safety.ts`) |
 | Admin, moderation, editorial CMS, CSV import, audit, user lifecycle | **Convex** (`convex/admin.ts`, `moderation.ts`, `editorial.ts`, `imports.ts`) |
 
-Migration plan (do not skip phases): `docs/plans/2026-09-03-supabase-to-local-convex.md`
+Migration plan (historical): `docs/plans/2026-09-03-supabase-to-local-convex.md`
 
-- **Phases 0–7: done.** Auth, catalog/discovery/search/feed, product writes, messaging/presence/blocks, and admin/editorial.
-- **Phase 8:** Convex-only cutover. Archive leftover Supabase. Keep `lib/supabase/*` until then.
+- **Phases 0–8: done.** Convex is the only application data plane.
 
 ---
 
@@ -56,7 +56,6 @@ Do not scatter vendor SDKs in components.
   `node_modules/next/dist/docs/` before new APIs). Middleware is **`proxy.ts`**.
 - React 19 · TypeScript · Tailwind 4 · Zod
 - **Convex 1.45** self-hosted + `@convex-dev/auth` **0.0.95**
-- Leftover Supabase (`@supabase/ssr`) is Phase 8 archive-only. Keep `lib/supabase/*` until that cutover.
 - Vitest · Playwright · Colima Docker
 
 ---
@@ -71,8 +70,8 @@ features/auth/            Server actions (export names are frozen by contract te
 features/onboarding/
 lib/auth/session.ts       getSessionUser() via api.profiles.current + JWT cookie.
 lib/convex/               server.ts always passes token + NEXT_PUBLIC_CONVEX_URL.
-lib/supabase/             Leftover until Phase 8 archive. Do not delete yet.
 convex/                   Backend: auth, catalog, feed, social, messages, admin, moderation, editorial, imports.
+database/supabase-archive/ Historical SQL only. Do not run.
 convex/_providers/        Forked Password + Email OTP (lockout, anti-enumeration).
 convex/_lib/              authz, geo, search, ranking copies, uniqueness, audit.
 compose.convex.yml        Loopback backend :3222, site :3223, dashboard :6799, Mailpit.
@@ -85,6 +84,7 @@ e2e/auth-local.spec.ts    Signup → OTP → onboarding → reset → login → 
 e2e/guest-discover.spec.ts Guest /home + /explore after Phase 4.
 e2e/messages-local.spec.ts Guest /messages empty-state after Phase 6.
 e2e/admin-moderate.spec.ts Skips unless E2E_ADMIN_EMAIL is set.
+e2e/roles-local.spec.ts   Guest plus optional role smokes from ignored env.
 ```
 
 ---
@@ -127,7 +127,7 @@ Auth action **export names** in `features/auth/actions.ts` are frozen by
 as a file (it now just redirects expired).
 
 Presence and typing write Convex `profiles` / `conversation_typing`. Do not
-reintroduce a Supabase client heartbeat.
+reintroduce a client heartbeat against another backend.
 
 Google OAuth is out of scope. `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false`.
 
@@ -241,8 +241,8 @@ hits `/home` and `/explore` on Convex reads (empty feed chrome is enough).
 
 - Next.js 16: `proxy.ts`, not `middleware.ts`.
 - Prefer existing design system and Vietnamese UI copy.
-- Do not delete `lib/supabase/*` or product routes “to finish Convex”.
 - Do not invent demo passwords or commit keys.
+- Do not treat `database/supabase-archive/` as a runtime.
 - Do not force-push `main`.
 - After UI changes, verify in a browser or Playwright, not a single screenshot.
 
