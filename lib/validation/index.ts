@@ -142,12 +142,12 @@ export const moodAdminSchema = z.object({
 });
 
 export const placeAdminSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().min(1).optional(),
   name: z.string().min(2).max(120),
   slug: z.string().min(2).max(120),
   shortDescription: z.string().max(180).optional().nullable(),
   description: z.string().max(4000).optional().nullable(),
-  categoryId: z.string().uuid().optional().nullable(),
+  categoryId: z.string().min(1).optional().nullable(),
   address: z.string().max(200).optional().nullable(),
   district: z.string().max(80).optional().nullable(),
   city: z.string().min(1).max(80),

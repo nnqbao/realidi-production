@@ -1,10 +1,8 @@
 import Link from "next/link";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { Button } from "@/components/ui/button";
 import { PlaceCsvImport } from "@/features/admin/place-csv-import";
-import type { PlaceStatus } from "@/types/database";
-
-const PAGE_SIZE = 30;
 
 export default async function AdminPlacesPage({
   searchParams,
@@ -12,25 +10,11 @@ export default async function AdminPlacesPage({
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
 }) {
   const { q, status, page } = await searchParams;
-  const offset = Math.max(0, (Number(page ?? 1) - 1) * PAGE_SIZE);
-  const supabase = await createServerSupabase();
-  let query = supabase
-    .from("places")
-    .select("id, name, slug, status, editorial_score, district, deleted_at", { count: "exact" })
-    .order("name")
-    .range(offset, offset + PAGE_SIZE - 1);
-  if (status === "deleted") query = query.not("deleted_at", "is", null);
-  else {
-    query = query.is("deleted_at", null);
-    if (status) query = query.eq("status", status as PlaceStatus);
-  }
-  if (q) {
-    const safe = q.replace(/[%_,()]/g, " ").trim();
-    if (safe) query = query.or(`name.ilike.%${safe}%,district.ilike.%${safe}%,slug.ilike.%${safe}%`);
-  }
-  const { data, count } = await query;
-  const totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
-  const current = Number(page ?? 1) || 1;
+  const data = await convexQueryAuthed(api.editorial.listPlaces, {
+    query: q,
+    status,
+    page: Number(page ?? 1) || 1,
+  });
 
   return (
     <div>
@@ -56,11 +40,11 @@ export default async function AdminPlacesPage({
         </button>
       </form>
       <PlaceCsvImport />
-      {(data ?? []).length === 0 ? (
+      {data.items.length === 0 ? (
         <p className="mt-6 text-sm text-[#6F7480]">Chưa có địa điểm khớp bộ lọc.</p>
       ) : (
         <ul className="mt-4 space-y-2">
-          {(data ?? []).map((p) => (
+          {data.items.map((p) => (
             <li key={p.id} className="flex items-center justify-between rounded-2xl border border-subtle bg-surface px-4 py-3">
               <div>
                 <Link href={`/admin/places/${p.id}`} className="font-medium">
@@ -77,16 +61,16 @@ export default async function AdminPlacesPage({
           ))}
         </ul>
       )}
-      {totalPages > 1 ? (
+      {data.totalPages > 1 ? (
         <p className="mt-4 text-sm">
-          {current > 1 ? (
-            <Link href={`/admin/places?q=${q ?? ""}&status=${status ?? ""}&page=${current - 1}`} className="underline">
+          {data.page > 1 ? (
+            <Link href={`/admin/places?q=${q ?? ""}&status=${status ?? ""}&page=${data.page - 1}`} className="underline">
               Trước
             </Link>
           ) : null}{" "}
-          Trang {current}/{totalPages}{" "}
-          {current < totalPages ? (
-            <Link href={`/admin/places?q=${q ?? ""}&status=${status ?? ""}&page=${current + 1}`} className="underline">
+          Trang {data.page}/{data.totalPages}{" "}
+          {data.page < data.totalPages ? (
+            <Link href={`/admin/places?q=${q ?? ""}&status=${status ?? ""}&page=${data.page + 1}`} className="underline">
               Sau
             </Link>
           ) : null}

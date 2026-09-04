@@ -1,4 +1,5 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { adminUpsertPlace } from "@/features/admin/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,8 +9,7 @@ import { redirect } from "next/navigation";
 import { slugify } from "@/lib/utils";
 
 export default async function NewPlacePage() {
-  const supabase = await createServerSupabase();
-  const { data: categories } = await supabase.from("place_categories").select("id, name_vi").eq("is_active", true);
+  const categories = await convexQueryAuthed(api.editorial.listCategories, {});
   return (
     <div className="max-w-xl">
       <h1 className="font-display text-3xl">Tạo nơi</h1>
@@ -51,7 +51,7 @@ export default async function NewPlacePage() {
         <label className="block text-sm">
           Danh mục
           <select name="categoryId" className="mt-1 w-full rounded-xl border border-brand/14 bg-surface px-3 py-2">
-            {(categories ?? []).map((c) => (
+            {categories.filter((c) => c.is_active).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name_vi}
               </option>

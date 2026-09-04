@@ -1,6 +1,7 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
 import { getSessionUser } from "@/lib/auth/session";
 import { isAdmin } from "@/lib/auth/roles";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { redirect } from "next/navigation";
 
 export default async function AdminAuditPage({
@@ -11,12 +12,7 @@ export default async function AdminAuditPage({
   const session = await getSessionUser();
   if (!session || !isAdmin(session.profile.role)) redirect("/admin");
   const { q } = await searchParams;
-  const supabase = await createServerSupabase();
-  const { data } = await supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(120);
-  const rows = (data ?? []).filter((row) => {
-    if (!q) return true;
-    return `${row.action} ${row.target_type} ${row.reason ?? ""}`.toLowerCase().includes(q.toLowerCase());
-  });
+  const rows = await convexQueryAuthed(api.admin.listAudit, { query: q });
   return (
     <div>
       <h1 className="font-display text-3xl">Nhật ký kiểm toán</h1>
@@ -32,7 +28,7 @@ export default async function AdminAuditPage({
             <li key={row.id} className="rounded-2xl border border-subtle px-4 py-3 text-sm">
               <p className="font-medium">{row.action}</p>
               <p className="text-[#6F7480]">
-                {row.target_type} {row.target_id} · {new Date(row.created_at).toLocaleString("vi-VN")}
+                {row.target_type} {row.target_id} · {new Date(row.created_at ?? "").toLocaleString("vi-VN")}
               </p>
               {row.reason ? <p className="mt-1">{row.reason}</p> : null}
             </li>

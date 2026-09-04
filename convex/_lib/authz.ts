@@ -92,6 +92,14 @@ export const requireModerator = (ctx: AuthzCtx, now?: number) =>
 export const requirePlaceManager = (ctx: AuthzCtx, now?: number) =>
   requireRole(ctx, (role) => hasCapability(role, "managePlaces"), now);
 
+export const requireStaff = (ctx: AuthzCtx, now?: number) =>
+  requireRole(
+    ctx,
+    (role) =>
+      role === "moderator" || role === "editor" || role === "admin" || role === "owner",
+    now,
+  );
+
 export async function requireConversationMember(
   ctx: AuthzCtx,
   conversationId: GenericId<"conversations">,

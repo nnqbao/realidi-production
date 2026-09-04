@@ -36,7 +36,7 @@ export default async function AdminHomePage() {
         <ul className="mt-3 space-y-2">
           {stats.recent.map((row) => (
             <li key={row.id} className="rounded-2xl border border-subtle px-4 py-3 text-sm">
-              {row.action} · {row.target_type} · {new Date(row.created_at).toLocaleString("vi-VN")}
+              {row.action} · {row.target_type} · {row.created_at ? new Date(row.created_at).toLocaleString("vi-VN") : ""}
             </li>
           ))}
         </ul>

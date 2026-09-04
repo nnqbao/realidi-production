@@ -1,6 +1,7 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
 import { getSessionUser } from "@/lib/auth/session";
 import { canModerate } from "@/lib/auth/roles";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { ReportActions } from "@/features/admin/report-actions";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -22,21 +23,23 @@ export default async function AdminReportsPage({
     );
   }
   const { status, q } = await searchParams;
-  const supabase = await createServerSupabase();
-  let query = supabase.from("reports").select("*").order("created_at", { ascending: false }).limit(80);
-  if (status) query = query.eq("status", status);
-  const { data } = await query;
-  const filtered = q
-    ? (data ?? []).filter((r) => `${r.reason} ${r.details ?? ""} ${r.target_type}`.includes(q))
-    : (data ?? []);
-  const { data: staff } = await supabase
-    .from("profiles")
-    .select("id, display_name, role")
-    .in("role", ["owner", "admin", "moderator"]);
+  const [filtered, staff] = await Promise.all([
+    convexQueryAuthed(api.moderation.listReports, {
+      status:
+        status === "pending" ||
+        status === "investigating" ||
+        status === "resolved" ||
+        status === "dismissed"
+          ? status
+          : undefined,
+      query: q,
+    }),
+    convexQueryAuthed(api.admin.staffOptions, {}),
+  ]);
 
   return (
     <div>
-      <h1 className="font-display text-3xl">Hàng đợi kiểm duyệt</h1>
+      <h1 className="font-display text-3xl">Báo cáo</h1>
       <form className="mt-4 flex flex-wrap gap-2">
         <input name="q" defaultValue={q} placeholder="Tìm lý do, loại" className="min-h-11 rounded-xl border border-brand/14 px-3" />
         <select name="status" defaultValue={status ?? ""} className="min-h-11 rounded-xl border border-brand/14 px-3">
@@ -61,9 +64,9 @@ export default async function AdminReportsPage({
               </p>
               <p className="text-muted-foreground">{r.details}</p>
               <p className="mt-1 text-xs text-[#6F7480]">
-                {r.target_id} · {new Date(r.created_at).toLocaleString("vi-VN")}
+                {r.target_id} · {new Date(r.created_at ?? "").toLocaleString("vi-VN")}
               </p>
-              <ReportActions reportId={r.id} targetType={r.target_type} moderators={staff ?? []} />
+              <ReportActions reportId={r.id} targetType={r.target_type} moderators={staff} />
             </li>
           ))}
         </ul>

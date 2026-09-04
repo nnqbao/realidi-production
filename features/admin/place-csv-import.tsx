@@ -34,7 +34,7 @@ export function PlaceCsvImport() {
     >
       <p className="text-sm font-medium">Nhập CSV</p>
       <p className="text-xs text-[#6F7480]">
-        Cột bắt buộc: name, latitude, longitude. Tùy chọn: slug, address, district, city, short_description, status, phone, website. Dòng trùng slug sẽ được bỏ qua.
+        Cột bắt buộc: name, latitude, longitude. Tùy chọn: slug, address, district, city, short_description, status, phone, website, external_provider, external_provider_id. Dòng trùng slug hoặc provider sẽ được bỏ qua.
       </p>
       <input type="file" name="file" accept=".csv,text/csv" required />
       <Button type="submit" disabled={pending} size="sm">

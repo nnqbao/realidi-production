@@ -1,7 +1,8 @@
 "use server";
 
-import { createServerSupabase } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { revalidatePath } from "next/cache";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { requireUser } from "@/lib/auth/session";
 import {
   assertAdmin,
@@ -12,10 +13,10 @@ import {
   isOwner,
   type UserRole,
 } from "@/lib/auth/roles";
-import { writeAuditLog } from "@/lib/auth/audit";
+import { convexAction, convexMutation, convexQueryAuthed } from "@/lib/convex/server";
 import { recordProductEvent } from "@/features/social/actions";
-import { revalidatePath } from "next/cache";
 import { validateMediaFile } from "@/lib/media";
+import { parseCsv, csvHeaderIndex } from "@/lib/csv";
 import { slugify } from "@/lib/utils";
 import type { PlaceStatus } from "@/types/database";
 
@@ -29,71 +30,15 @@ type PlaceImportRow = { line: number; error?: string; ok?: boolean; skipped?: st
 
 export async function adminDashboardStats() {
   await staffSession();
-  const supabase = await createServerSupabase();
-  const now = Date.now();
-  const d7 = new Date(now - 7 * 24 * 60 * 60_000).toISOString();
-  const d30 = new Date(now - 30 * 24 * 60 * 60_000).toISOString();
-  const [
-    users,
-    users7,
-    users30,
-    places,
-    placesDraft,
-    placesPublished,
-    placesHidden,
-    posts,
-    reportsOpen,
-    reportsHigh,
-    suspended,
-    recent,
-  ] = await Promise.all([
-    supabase.from("profiles").select("id", { count: "exact", head: true }),
-    supabase.from("profiles").select("id", { count: "exact", head: true }).gte("created_at", d7),
-    supabase.from("profiles").select("id", { count: "exact", head: true }).gte("created_at", d30),
-    supabase.from("places").select("id", { count: "exact", head: true }).is("deleted_at", null),
-    supabase.from("places").select("id", { count: "exact", head: true }).in("status", ["pending", "draft"]),
-    supabase.from("places").select("id", { count: "exact", head: true }).eq("status", "active"),
-    supabase.from("places").select("id", { count: "exact", head: true }).eq("status", "hidden"),
-    supabase.from("experience_posts").select("id", { count: "exact", head: true }).eq("status", "published"),
-    supabase.from("reports").select("id", { count: "exact", head: true }).in("status", ["pending", "investigating"]),
-    supabase.from("reports").select("id", { count: "exact", head: true }).eq("priority", "high").in("status", ["pending", "investigating"]),
-    supabase.from("profiles").select("id", { count: "exact", head: true }).not("suspended_at", "is", null).is("banned_at", null),
-    supabase.from("audit_logs").select("id, action, target_type, created_at, actor_id").order("created_at", { ascending: false }).limit(8),
-  ]);
-  return {
-    users: users.count ?? 0,
-    users7: users7.count ?? 0,
-    users30: users30.count ?? 0,
-    places: places.count ?? 0,
-    placesDraft: placesDraft.count ?? 0,
-    placesPublished: placesPublished.count ?? 0,
-    placesHidden: placesHidden.count ?? 0,
-    posts: posts.count ?? 0,
-    reportsOpen: reportsOpen.count ?? 0,
-    reportsHigh: reportsHigh.count ?? 0,
-    suspended: suspended.count ?? 0,
-    recent: recent.data ?? [],
-  };
+  return await convexQueryAuthed(api.admin.dashboard, {});
 }
 
 export async function adminAssignReport(reportId: string, assigneeId: string | null) {
   const session = await staffSession();
   assertCanModerate(session.profile.role);
-  const supabase = await createServerSupabase();
-  await supabase
-    .from("reports")
-    .update({
-      assigned_to: assigneeId,
-      status: "investigating",
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", reportId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "report_assigned",
-    targetType: "report",
-    targetId: reportId,
-    after: { assigned_to: assigneeId },
+  await convexMutation(api.moderation.assignReport, {
+    reportId: reportId as Id<"reports">,
+    assigneeId: assigneeId ? (assigneeId as Id<"profiles">) : null,
   });
   revalidatePath("/admin/reports");
 }
@@ -114,49 +59,28 @@ export async function adminModerateReport(input: {
     return { error: "REASON_REQUIRED" as const };
   }
   if (input.banUserId) assertAdmin(session.profile.role);
-  const supabase = await createServerSupabase();
-  const { data: report } = await supabase.from("reports").select("*").eq("id", input.reportId).maybeSingle();
-  if (!report) return { error: "NOT_FOUND" as const };
-  if (input.hideTarget && (report.target_type === "post" || report.target_type === "comment")) {
-    if (report.target_type === "post") {
-      await supabase.from("experience_posts").update({ moderation_status: "hidden", status: "hidden" }).eq("id", report.target_id);
-    } else {
-      await supabase.from("comments").update({ deleted_at: new Date().toISOString(), moderation_status: "removed" }).eq("id", report.target_id);
-    }
-  }
-  const admin = createAdminClient();
-  if (input.warnUserId) {
-    await admin.from("profiles").update({ warned_at: new Date().toISOString() }).eq("id", input.warnUserId);
-  }
+  await convexMutation(api.moderation.moderateReport, {
+    reportId: input.reportId as Id<"reports">,
+    decision: input.decision,
+    reason: input.reason,
+    hideTarget: input.hideTarget,
+  });
   if (input.suspendUserId) {
-    const ends = input.suspendHours
-      ? new Date(Date.now() + input.suspendHours * 3600_000).toISOString()
-      : null;
-    await admin.from("profiles").update({ suspended_at: new Date().toISOString(), suspension_ends_at: ends }).eq("id", input.suspendUserId);
+    await convexAction(api.admin.setUserStatus, {
+      userId: input.suspendUserId as Id<"profiles">,
+      action: "suspend",
+      reason: input.reason,
+      hours: input.suspendHours ?? undefined,
+    });
     await recordProductEvent("admin_user_suspended", { target_user_id: input.suspendUserId });
   }
   if (input.banUserId) {
-    await admin.from("profiles").update({ banned_at: new Date().toISOString(), ban_reason: input.reason }).eq("id", input.banUserId);
-    try {
-      await admin.auth.admin.signOut(input.banUserId, "global");
-    } catch {
-      /* auth admin may be unavailable locally */
-    }
+    await convexAction(api.admin.setUserStatus, {
+      userId: input.banUserId as Id<"profiles">,
+      action: "ban",
+      reason: input.reason,
+    });
   }
-  await supabase.from("reports").update({
-    status: input.decision,
-    resolved_by: session.user.id,
-    resolved_at: new Date().toISOString(),
-    reviewed_at: new Date().toISOString(),
-  }).eq("id", input.reportId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "admin_report_actioned",
-    targetType: "report",
-    targetId: input.reportId,
-    reason: input.reason,
-    after: { decision: input.decision, hideTarget: input.hideTarget },
-  });
   await recordProductEvent("admin_report_actioned", { report_id: input.reportId });
   revalidatePath("/admin/reports");
   return { ok: true as const };
@@ -166,25 +90,13 @@ export async function adminChangeRole(userId: string, role: UserRole, reason: st
   const session = await requireUser();
   assertAdmin(session.profile.role);
   if (!canAssignRoles(session.profile.role, role)) return { error: "FORBIDDEN_ROLE" as const };
-  const admin = createAdminClient();
-  const { data: target } = await admin.from("profiles").select("id, role").eq("id", userId).maybeSingle();
-  if (!target) return { error: "NOT_FOUND" as const };
-  if (target.role === "owner" && role !== "owner") {
-    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("role", "owner");
-    if ((count ?? 0) <= 1) return { error: "LAST_OWNER" as const };
-  }
-  await admin.from("profiles").update({ role }).eq("id", userId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "set_role",
-    targetType: "user",
-    targetId: userId,
-    before: { role: target.role },
-    after: { role },
+  const result = await convexAction(api.admin.changeRole, {
+    userId: userId as Id<"profiles">,
+    role,
     reason,
   });
   revalidatePath("/admin/users");
-  return { ok: true as const };
+  return result;
 }
 
 export async function adminSetUserStatus(input: {
@@ -195,43 +107,17 @@ export async function adminSetUserStatus(input: {
 }) {
   const session = await requireUser();
   assertAdmin(session.profile.role);
-  if (!input.reason.trim() && input.action !== "unsuspend" && input.action !== "restore") {
-    return { error: "REASON_REQUIRED" as const };
-  }
-  const admin = createAdminClient();
-  const { data: target } = await admin.from("profiles").select("id, role").eq("id", input.userId).maybeSingle();
-  if (target?.role === "owner" && input.action === "ban") return { error: "LAST_OWNER" as const };
-  const now = new Date().toISOString();
-  if (input.action === "suspend") {
-    await admin.from("profiles").update({
-      suspended_at: now,
-      suspension_ends_at: input.hours ? new Date(Date.now() + input.hours * 3600_000).toISOString() : null,
-    }).eq("id", input.userId);
-  }
-  if (input.action === "unsuspend") {
-    await admin.from("profiles").update({ suspended_at: null, suspension_ends_at: null }).eq("id", input.userId);
-  }
-  if (input.action === "ban") {
-    await admin.from("profiles").update({ banned_at: now, ban_reason: input.reason }).eq("id", input.userId);
-    try {
-      await admin.auth.admin.signOut(input.userId, "global");
-    } catch {
-      /* ignore */
-    }
-  }
-  if (input.action === "restore") {
-    await admin.from("profiles").update({ banned_at: null, ban_reason: null, suspended_at: null, suspension_ends_at: null }).eq("id", input.userId);
-  }
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: `user_${input.action}`,
-    targetType: "user",
-    targetId: input.userId,
+  const result = await convexAction(api.admin.setUserStatus, {
+    userId: input.userId as Id<"profiles">,
+    action: input.action,
     reason: input.reason,
+    hours: input.hours ?? undefined,
   });
-  if (input.action === "suspend") await recordProductEvent("admin_user_suspended", { target_user_id: input.userId });
+  if (input.action === "suspend" && !("error" in result)) {
+    await recordProductEvent("admin_user_suspended", { target_user_id: input.userId });
+  }
   revalidatePath("/admin/users");
-  return { ok: true as const };
+  return result;
 }
 
 export async function adminUploadPlaceImage(placeId: string, formData: FormData) {
@@ -244,31 +130,31 @@ export async function adminUploadPlaceImage(placeId: string, formData: FormData)
   }
   const check = validateMediaFile(file);
   if (!check.ok) return { error: check.error };
-  const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
-  const path = `${placeId}/${crypto.randomUUID()}.${ext}`;
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.storage.from("place-media").upload(path, file, { contentType: file.type, upsert: false });
-  if (error) return { error: error.message };
-  const alt = String(formData.get("alt") ?? "").slice(0, 180);
-  await supabase.from("place_media").insert({
-    place_id: placeId,
-    storage_path: path,
-    alt_text: alt || null,
-    created_by: session.user.id,
+  const uploadUrl = await convexMutation(api.files.generateUploadUrl, { purpose: "place" });
+  const uploaded = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  if (!uploaded.ok) return { error: "UPLOAD_FAILED" as const };
+  const body = (await uploaded.json()) as { storageId?: string };
+  if (!body.storageId) return { error: "UPLOAD_FAILED" as const };
+  await convexMutation(api.files.finalize, {
+    storageId: body.storageId as Id<"_storage">,
+    purpose: "place",
+    mimeType: file.type,
+    byteSize: file.size,
   });
   const cover = formData.get("cover") === "on";
-  if (cover) {
-    await supabase.from("places").update({ cover_image_path: path, updated_by: session.user.id }).eq("id", placeId);
-  }
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "place_media_uploaded",
-    targetType: "place",
-    targetId: placeId,
-    after: { path },
+  const alt = String(formData.get("alt") ?? "").slice(0, 180);
+  await convexMutation(api.editorial.attachPlaceMedia, {
+    placeId: placeId as Id<"places">,
+    storageId: body.storageId as Id<"_storage">,
+    altText: alt || undefined,
+    cover,
   });
   revalidatePath(`/admin/places/${placeId}`);
-  return { ok: true as const, path };
+  return { ok: true as const, path: body.storageId };
 }
 
 export async function adminSaveCollection(input: {
@@ -282,27 +168,14 @@ export async function adminSaveCollection(input: {
 }) {
   const session = await staffSession();
   assertCanManagePlaces(session.profile.role);
-  const supabase = await createServerSupabase();
-  const payload = {
-    slug: slugify(input.slug || input.title),
+  await convexMutation(api.editorial.saveCollection, {
+    id: input.id ? (input.id as Id<"editorial_collections">) : undefined,
+    slug: input.slug,
     title: input.title,
-    description: input.description ?? null,
+    description: input.description,
     kind: input.kind,
     status: input.status,
-    sort_order: input.sortOrder,
-    updated_by: session.user.id,
-  };
-  if (input.id) {
-    await supabase.from("editorial_collections").update(payload).eq("id", input.id);
-  } else {
-    await supabase.from("editorial_collections").insert({ ...payload, created_by: session.user.id });
-  }
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: input.id ? "collection_updated" : "collection_created",
-    targetType: "collection",
-    targetId: input.id ?? null,
-    after: payload,
+    sortOrder: input.sortOrder,
   });
   revalidatePath("/admin/collections");
   return { ok: true as const };
@@ -317,16 +190,7 @@ export async function adminSetFeatured(input: {
 }) {
   const session = await staffSession();
   assertCanManagePlaces(session.profile.role);
-  const supabase = await createServerSupabase();
-  await supabase.from("featured_placements").insert({
-    surface: input.surface,
-    target_type: input.targetType,
-    target_id: input.targetId,
-    status: input.status,
-    sort_order: input.sortOrder,
-    created_by: session.user.id,
-    updated_by: session.user.id,
-  });
+  await convexMutation(api.editorial.setFeatured, input);
   revalidatePath("/admin/collections");
   return { ok: true as const };
 }
@@ -334,21 +198,10 @@ export async function adminSetFeatured(input: {
 export async function adminSetPlaceStatus(placeId: string, status: "active" | "hidden" | "draft" | "archived", reason?: string) {
   const session = await staffSession();
   assertCanManagePlaces(session.profile.role);
-  const supabase = await createServerSupabase();
-  const extra =
-    status === "archived"
-      ? { archived_at: new Date().toISOString(), deleted_at: null }
-      : status === "active"
-        ? { archived_at: null, deleted_at: null }
-        : {};
-  await supabase.from("places").update({ status, updated_by: session.user.id, ...extra }).eq("id", placeId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: `place_${status}`,
-    targetType: "place",
-    targetId: placeId,
-    reason: reason ?? null,
-    after: { status },
+  await convexMutation(api.editorial.setPlaceStatus, {
+    placeId: placeId as Id<"places">,
+    status,
+    reason,
   });
   if (status === "active") await recordProductEvent("admin_place_published", { place_id: placeId });
   revalidatePath("/admin/places");
@@ -359,20 +212,9 @@ export async function adminSetPlaceStatus(placeId: string, status: "active" | "h
 export async function adminSoftDeletePlace(placeId: string, reason: string) {
   const session = await staffSession();
   assertCanManagePlaces(session.profile.role);
-  const supabase = await createServerSupabase();
-  const { count } = await supabase.from("experience_posts").select("id", { count: "exact", head: true }).eq("place_id", placeId);
-  await supabase.from("places").update({
-    deleted_at: new Date().toISOString(),
-    status: "archived",
-    updated_by: session.user.id,
-  }).eq("id", placeId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "place_soft_deleted",
-    targetType: "place",
-    targetId: placeId,
+  await convexMutation(api.editorial.softDeletePlace, {
+    placeId: placeId as Id<"places">,
     reason,
-    after: { referenced_posts: count ?? 0 },
   });
   revalidatePath("/admin/places");
   return { ok: true as const };
@@ -381,19 +223,7 @@ export async function adminSoftDeletePlace(placeId: string, reason: string) {
 export async function adminRestorePlace(placeId: string) {
   const session = await staffSession();
   assertCanManagePlaces(session.profile.role);
-  const supabase = await createServerSupabase();
-  await supabase.from("places").update({
-    deleted_at: null,
-    archived_at: null,
-    status: "draft",
-    updated_by: session.user.id,
-  }).eq("id", placeId);
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "place_restored",
-    targetType: "place",
-    targetId: placeId,
-  });
+  await convexMutation(api.editorial.restorePlace, { placeId: placeId as Id<"places"> });
   revalidatePath("/admin/places");
   return { ok: true as const };
 }
@@ -404,65 +234,51 @@ export async function adminImportPlacesCsv(formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File)) return { error: "NO_FILE" as const, rows: [] as PlaceImportRow[] };
   const text = await file.text();
-  const { parseCsv, csvHeaderIndex } = await import("@/lib/csv");
   const table = parseCsv(text);
   if (table.length < 2) return { error: "EMPTY" as const, rows: [] as PlaceImportRow[] };
   const header = csvHeaderIndex(table[0] ?? []);
   const required = ["name", "latitude", "longitude"] as const;
   for (const key of required) {
-    if (header[key] == null) return { error: "HEADER" as const, rows: [{ line: 1, error: `Thiếu cột ${key}` }] as PlaceImportRow[] };
+    if (header[key] == null) return { error: "HEADER" as const, rows: [{ line: 1, error: `Thiếu cột ${key}` }] };
   }
-  const supabase = await createServerSupabase();
-  const results: PlaceImportRow[] = [];
+  const allowed: PlaceStatus[] = ["active", "draft", "hidden", "archived", "pending"];
+  const rows = [];
   for (let i = 1; i < table.length; i++) {
     const cells = table[i] ?? [];
     const get = (key: string) => cells[header[key]]?.trim() ?? "";
     const name = get("name");
     const lat = Number(get("latitude"));
     const lng = Number(get("longitude"));
-    if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      results.push({ line: i + 1, error: "Thiếu tên hoặc tọa độ không hợp lệ." });
-      continue;
-    }
-    const slug = slugify(get("slug") || name);
-    const { data: existing } = await supabase.from("places").select("id").eq("slug", slug).maybeSingle();
-    if (existing) {
-      results.push({ line: i + 1, skipped: `Slug đã tồn tại: ${slug}` });
-      continue;
-    }
     const statusRaw = get("status") || "draft";
-    const allowed: PlaceStatus[] = ["active", "draft", "hidden", "archived", "pending"];
-    const status: PlaceStatus = allowed.includes(statusRaw as PlaceStatus) ? (statusRaw as PlaceStatus) : "draft";
-    const { error } = await supabase.from("places").insert({
+    rows.push({
+      line: i + 1,
       name,
-      slug,
-      short_description: get("short_description") || null,
-      address: get("address") || null,
-      district: get("district") || null,
-      city: get("city") || "TP. Hồ Chí Minh",
+      slug: slugify(get("slug") || name),
       latitude: lat,
       longitude: lng,
-      phone: get("phone") || null,
-      website: get("website") || null,
-      editorial_score: 0.5,
-      admin_quality_score: 0.5,
-      status,
-      source: "editorial",
-      verified_by_admin: true,
-      created_by: session.user.id,
-      updated_by: session.user.id,
+      shortDescription: get("short_description") || undefined,
+      address: get("address") || undefined,
+      district: get("district") || undefined,
+      city: get("city") || undefined,
+      phone: get("phone") || undefined,
+      website: get("website") || undefined,
+      status: (allowed.includes(statusRaw as PlaceStatus) ? statusRaw : "draft") as (typeof allowed)[number],
+      externalProvider: get("external_provider") || undefined,
+      externalProviderId: get("external_provider_id") || undefined,
     });
-    if (error) results.push({ line: i + 1, error: error.message });
-    else results.push({ line: i + 1, ok: true });
   }
-  await writeAuditLog({
-    actorId: session.user.id,
-    action: "place_csv_import",
-    targetType: "place",
-    after: { imported: results.filter((r) => r.ok).length, failed: results.filter((r) => r.error).length },
-  });
+  const result = await convexAction(api.imports.commit, { rows });
   revalidatePath("/admin/places");
-  return { rows: results };
+  return { rows: result.results };
+}
+
+export async function adminRunSeed() {
+  const session = await requireUser();
+  assertAdmin(session.profile.role);
+  await convexMutation(api.seed.runAuthorized, {});
+  revalidatePath("/home");
+  revalidatePath("/explore");
+  revalidatePath("/admin");
 }
 
 export { isOwner };

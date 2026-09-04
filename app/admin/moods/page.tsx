@@ -1,16 +1,16 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { adminUpsertMood } from "@/features/admin/actions";
 import { Button } from "@/components/ui/button";
 
 export default async function AdminMoodsPage() {
-  const supabase = await createServerSupabase();
-  const { data } = await supabase.from("moods").select("*").order("layer").order("sort_order");
+  const data = await convexQueryAuthed(api.editorial.listMoods, {});
   return (
     <div>
       <h1 className="font-display text-3xl">Mood taxonomy</h1>
       <p className="mt-1 text-sm text-muted-foreground">Toàn bộ tên mood đến từ database — không hard-code trong UI.</p>
       <ul className="mt-4 space-y-2">
-        {(data ?? []).map((m) => (
+        {data.map((m) => (
           <li key={m.id} className="flex items-center justify-between rounded-2xl border border-subtle bg-surface px-4 py-3">
             <div>
               <p className="font-medium">

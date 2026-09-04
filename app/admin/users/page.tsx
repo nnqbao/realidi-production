@@ -1,6 +1,7 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
 import { getSessionUser } from "@/lib/auth/session";
 import { canManageUsers, canModerate, isOwner, type UserRole } from "@/lib/auth/roles";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { UserAdminActions } from "@/features/admin/user-actions";
 
 export default async function AdminUsersPage({
@@ -13,16 +14,11 @@ export default async function AdminUsersPage({
     return <p className="text-sm text-[#6F7480]">Bạn không có quyền xem người dùng.</p>;
   }
   const { q, role } = await searchParams;
-  const supabase = await createServerSupabase();
-  let query = supabase.from("profiles").select("id, display_name, username, role, created_at, suspended_at, banned_at").order("created_at", { ascending: false }).limit(100);
-  if (role) query = query.eq("role", role as UserRole);
-  const { data } = await query;
-  const rows = (data ?? []).filter((u) => {
-    if (!q) return true;
-    const hay = `${u.display_name} ${u.username}`.toLowerCase();
-    return hay.includes(q.toLowerCase());
+  const rows = await convexQueryAuthed(api.admin.listUsers, {
+    query: q,
+    role: role ? (role as UserRole) : undefined,
   });
-  const manage = canManageUsers(session?.profile.role);
+  const manage = canManageUsers(session.profile.role);
 
   return (
     <div>

@@ -2,8 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth/session";
 import { isStaff } from "@/lib/auth/roles";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
-import { ErrorState } from "@/components/states";
 
 export const dynamic = "force-dynamic";
 
@@ -22,16 +20,10 @@ const links = [
   { href: "/admin/settings", label: "Cờ tính năng" },
   { href: "/admin/ranking", label: "Xếp hạng nơi" },
   { href: "/admin/feed", label: "Bảng tin" },
+  { href: "/admin/seed", label: "Seed" },
 ] as const;
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  if (!isSupabaseConfigured()) {
-    return (
-      <div className="p-8">
-        <ErrorState title="Chưa kết nối dữ liệu" description="Cấu hình máy chủ chưa sẵn sàng. Xem README." />
-      </div>
-    );
-  }
   const session = await getSessionUser().catch(() => null);
   if (!session) {
     redirect("/login?next=/admin");

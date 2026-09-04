@@ -1,5 +1,7 @@
 import { notFound, redirect } from "next/navigation";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { adminMergePlaces, adminUpsertPlace } from "@/features/admin/actions";
 import { adminRestorePlace, adminSetPlaceStatus, adminSoftDeletePlace } from "@/features/admin/console-actions";
 import { Button } from "@/components/ui/button";
@@ -10,11 +12,11 @@ import { Textarea } from "@/components/ui/textarea";
 
 export default async function EditPlacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = await createServerSupabase();
-  const { data: place } = await supabase.from("places").select("*").eq("id", id).maybeSingle();
-  if (!place) notFound();
-  const { data: others } = await supabase.from("places").select("id, name, address, latitude, longitude").neq("id", id).is("deleted_at", null).limit(200);
-  const dupes = (others ?? []).filter((row) => {
+  const loaded = await convexQueryAuthed(api.editorial.getPlace, { placeId: id as Id<"places"> }).catch(() => null);
+  if (!loaded?.place) notFound();
+  const place = loaded.place;
+  const others = loaded.others;
+  const dupes = others.filter((row) => {
     const sameName = row.name.trim().toLowerCase() === place.name.trim().toLowerCase();
     const sameAddress = Boolean(place.address && row.address && row.address.trim().toLowerCase() === place.address.trim().toLowerCase());
     const closeCoord =
@@ -26,7 +28,7 @@ export default async function EditPlacePage({ params }: { params: Promise<{ id: 
       Math.abs(Number(row.longitude) - Number(place.longitude)) < 0.0003;
     return sameName || sameAddress || closeCoord;
   });
-  const { data: media } = await supabase.from("place_media").select("*").eq("place_id", id).order("sort_order");
+  const media = loaded.media;
   return (
     <div className="max-w-xl space-y-8">
       <h1 className="font-display text-3xl">{place.name}</h1>
@@ -43,7 +45,7 @@ export default async function EditPlacePage({ params }: { params: Promise<{ id: 
       <PlaceMediaForm placeId={id} />
       <ul className="text-sm text-[#6F7480]">
         {(media ?? []).map((m) => (
-          <li key={m.id}>{m.storage_path} {m.alt_text ? `· ${m.alt_text}` : ""}</li>
+          <li key={m.id}>{m.url} {m.alt_text ? `· ${m.alt_text}` : ""}</li>
         ))}
       </ul>
       <form

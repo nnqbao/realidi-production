@@ -1,15 +1,12 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexQueryAuthed } from "@/lib/convex/server";
 import { adminSaveCollection, adminSetFeatured } from "@/features/admin/console-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { revalidatePath } from "next/cache";
 
 export default async function AdminCollectionsPage() {
-  const supabase = await createServerSupabase();
-  const [{ data: collections }, { data: featured }] = await Promise.all([
-    supabase.from("editorial_collections").select("*").order("sort_order"),
-    supabase.from("featured_placements").select("*").order("sort_order"),
-  ]);
+  const { collections, featured } = await convexQueryAuthed(api.editorial.listCollections, {});
   return (
     <div className="space-y-10">
       <div>
@@ -50,7 +47,7 @@ export default async function AdminCollectionsPage() {
         <Button type="submit">Lưu collection</Button>
       </form>
       <ul className="space-y-2">
-        {(collections ?? []).map((c) => (
+        {collections.map((c) => (
           <li key={c.id} className="rounded-2xl border border-subtle px-4 py-3 text-sm">
             {c.title} · {c.kind} · {c.status}
           </li>
@@ -78,7 +75,7 @@ export default async function AdminCollectionsPage() {
           <option value="place">place</option>
           <option value="post">post</option>
         </select>
-        <Input name="targetId" placeholder="UUID đối tượng" required />
+        <Input name="targetId" placeholder="ID đối tượng" required />
         <select name="status" className="min-h-11 w-full rounded-xl border border-brand/14 px-3">
           <option value="draft">draft</option>
           <option value="published">published</option>
@@ -87,7 +84,7 @@ export default async function AdminCollectionsPage() {
         <Button type="submit">Ghim</Button>
       </form>
       <ul className="space-y-2">
-        {(featured ?? []).map((f) => (
+        {featured.map((f) => (
           <li key={f.id} className="rounded-2xl border border-subtle px-4 py-3 text-sm">
             {f.surface} · {f.target_type} · {f.target_id} · {f.status}
           </li>
