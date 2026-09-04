@@ -1,17 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowDown, MoreHorizontal } from "lucide-react";
+import { useQuery } from "convex/react";
+import { MoreHorizontal } from "lucide-react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { ChatAvatar } from "./avatar";
 import { MessageBubble } from "./bubble";
 import { MessageComposer } from "./composer";
 import { ConversationInfo } from "./info-drawer";
 import { usePresence } from "./presence";
 import { presenceCopy } from "@/features/presence/format";
-import { useRealtimeChannel } from "@/features/realtime/use-realtime-channel";
-import { useDidReconnect } from "@/features/realtime/connection";
-import { conversationChannelName } from "@/features/realtime/reconnect";
 import { buildTimeline, lastMessagePreview } from "./format";
 import {
   deleteMessage,
@@ -20,8 +20,8 @@ import {
   markConversationRead,
   reportMessage,
   sendMessage,
+  setTyping,
   toggleReaction,
-  getHydratedMessage,
 } from "./actions";
 import type { ChatKind, ChatMessage, ProfileLite, ThreadPage } from "./types";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -37,138 +37,90 @@ export function ChatThread({
   peer: ProfileLite;
   initial: ThreadPage;
 }) {
-  const [messages, setMessages] = useState(initial.messages);
-  const [nextCursor, setNextCursor] = useState(initial.nextCursor);
-  const peerReadAt = initial.peerLastReadAt;
-  const [typing, setTyping] = useState(false);
+  const live = useQuery(api.messages.thread, {
+    conversationId: conversationId as Id<"conversations">,
+  });
+  const presenceRows = useQuery(api.presence.snapshot, {
+    userIds: [peer.id as Id<"profiles">],
+  });
+  const [older, setOlder] = useState<ChatMessage[]>([]);
+  const [locals, setLocals] = useState<ChatMessage[]>([]);
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [reply, setReply] = useState<ChatMessage | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [newBelow, setNewBelow] = useState(false);
+  const [sessionKey] = useState(() => crypto.randomUUID());
   const scroller = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const lastTyped = useRef(0);
   const presence = usePresence();
-  const snap = presence.getUserPresence(peer.id, peer.last_active_at ?? peer.last_seen_at ?? null, peer.show_activity_status);
+  const liveSnap = presenceRows?.[0];
+  const snap = liveSnap
+    ? { status: liveSnap.status, lastActiveAt: liveSnap.lastActiveAt }
+    : presence.getUserPresence(peer.id, peer.last_active_at ?? peer.last_seen_at ?? null, peer.show_activity_status);
   const statusLabel = presenceCopy(snap.status, snap.lastActiveAt);
   const peerPresence = snap.status === "hidden" ? null : snap.status;
+  const page = live ?? initial;
+  const liveMessages = page.messages;
+  const typing = page.typing;
+  const peerReadAt = page.peerLastReadAt;
+  const blocked = page.blocked;
+  const blockedByMe = page.blockedByMe;
+  const muted = page.muted;
+  const pageCursor = older.length > 0 ? olderCursor : page.nextCursor;
+  const seenClients = new Set(liveMessages.map((row) => row.client_id).filter(Boolean));
+  const pendingLocals = locals.filter(
+    (row) => row.status === "failed" || !row.client_id || !seenClients.has(row.client_id),
+  );
 
-  useEffect(() => {
-    void markConversationRead(conversationId);
-  }, [conversationId]);
-
-  const scrollToEnd = useCallback((smooth = false) => {
+  function scrollToEnd(smooth = false) {
     const node = scroller.current;
     if (!node) return;
     node.scrollTo({ top: node.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-  }, []);
+  }
 
   useEffect(() => {
+    void markConversationRead(conversationId);
     scrollToEnd(false);
-  }, [conversationId, scrollToEnd]);
-
-  const recover = useCallback(() => {
-    void listMessages(conversationId).then((page) => {
-      setMessages((prev) => {
-        const byId = new Map(prev.map((m) => [m.id, m]));
-        for (const row of page.messages) {
-          if (row.id) byId.set(row.id, { ...row, status: "sent" as const });
-        }
-        return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at));
-      });
-    });
   }, [conversationId]);
 
-  const { channelRef, showReconnect, connected } = useRealtimeChannel(
-    conversationChannelName(conversationId),
-    (channel) =>
-      channel
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
-          (payload) => {
-            const row = payload.new as ChatMessage & { payload: Record<string, unknown> };
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === row.id || (row.client_id && m.client_id === row.client_id))) {
-                return prev.map((m) => (m.client_id && m.client_id === row.client_id ? { ...m, id: row.id, status: "sent" } : m));
-              }
-              if (!nearBottom.current && row.sender_id !== currentUserId) {
-                setNewBelow(true);
-              }
-              return [
-                ...prev.filter((m) => m.id !== row.id),
-                {
-                  ...row,
-                  kind: row.kind,
-                  payload: row.payload ?? {},
-                  deleted_at: row.deleted_at ?? null,
-                  edited_at: row.edited_at ?? null,
-                  client_id: row.client_id ?? null,
-                  reply_to_message_id: row.reply_to_message_id ?? null,
-                  reply: null,
-                  sender: row.sender_id === currentUserId ? null : peer,
-                  reactions: [],
-                  imageUrl: null,
-                  post: null,
-                  place: null,
-                  profile: null,
-                  invite: null,
-                  status: "sent",
-                },
-              ];
-            });
-            if (row.kind !== "text" || row.reply_to_message_id) {
-              void getHydratedMessage(row.id).then((full) => {
-                if (!full) return;
-                setMessages((prev) => {
-                  if (prev.some((m) => m.id === full.id)) {
-                    return prev.map((m) => (m.id === full.id || (full.client_id && m.client_id === full.client_id) ? { ...full, status: "sent" } : m));
-                  }
-                  return [...prev, { ...full, status: "sent" }];
-                });
-              });
-            }
-            if (row.sender_id !== currentUserId) void markConversationRead(conversationId);
-            if (nearBottom.current) requestAnimationFrame(() => scrollToEnd(true));
-          },
-        )
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
-          (payload) => {
-            const row = payload.new as ChatMessage;
-            setMessages((prev) => prev.map((m) => (m.id === row.id ? { ...m, ...row, payload: (row.payload as Record<string, unknown>) ?? m.payload } : m)));
-          },
-        )
-        .on("broadcast", { event: "typing" }, (event) => {
-          const from = (event.payload as { userId?: string })?.userId;
-          if (!from || from === currentUserId) return;
-          setTyping(true);
-          window.setTimeout(() => setTyping(false), 2500);
-        }),
-  );
+  useEffect(() => {
+    if (live === undefined) return;
+    if (nearBottom.current) requestAnimationFrame(() => scrollToEnd(true));
+    if (live.messages.some((row) => row.sender_id !== currentUserId)) {
+      void markConversationRead(conversationId);
+    }
+  }, [live, conversationId, currentUserId]);
 
-  useDidReconnect(connected, recover);
+  const messages = useMemo(() => {
+    const liveIds = new Set(liveMessages.map((row) => row.id));
+    const merged = [
+      ...older.filter((row) => !liveIds.has(row.id)),
+      ...liveMessages,
+      ...pendingLocals,
+    ];
+    return merged.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [older, liveMessages, pendingLocals]);
 
-  const lastTyped = useRef(0);
   function onTyping() {
     const now = Date.now();
     if (now - lastTyped.current < 900) return;
     lastTyped.current = now;
-    void channelRef.current?.send({ type: "broadcast", event: "typing", payload: { userId: currentUserId } });
+    void setTyping(conversationId, sessionKey);
   }
 
   async function loadOlder() {
-    if (!nextCursor || loadingOlder) return;
+    if (!pageCursor || loadingOlder) return;
     const node = scroller.current;
     const prevHeight = node?.scrollHeight ?? 0;
     setLoadingOlder(true);
-    const page = await listMessages(conversationId, nextCursor);
-    setMessages((prev) => {
-      const seen = new Set(prev.map((m) => m.id));
-      return [...page.messages.filter((m) => !seen.has(m.id)), ...prev];
+    const next = await listMessages(conversationId, pageCursor);
+    setOlder((prev) => {
+      const seen = new Set([...prev, ...liveMessages].map((row) => row.id));
+      return [...next.messages.filter((row) => !seen.has(row.id)), ...prev];
     });
-    setNextCursor(page.nextCursor);
+    setOlderCursor(next.nextCursor);
     setLoadingOlder(false);
     requestAnimationFrame(() => {
       if (node) node.scrollTop = node.scrollHeight - prevHeight;
@@ -204,10 +156,13 @@ export function ChatThread({
       post: null,
       place: null,
       profile: null,
-      invite: input.kind === "invite" ? { invitationId: null, status: "pending", suggestedDate: null, suggestedTime: null, note: input.body ?? null } : null,
+      invite:
+        input.kind === "invite"
+          ? { invitationId: null, status: "pending", suggestedDate: null, suggestedTime: null, note: input.body ?? null }
+          : null,
       status: "sending",
     };
-    setMessages((prev) => [...prev, optimistic]);
+    setLocals((prev) => [...prev, optimistic]);
     requestAnimationFrame(() => scrollToEnd(true));
     try {
       const saved = await sendMessage({
@@ -218,14 +173,16 @@ export function ChatThread({
         clientId: input.clientId,
         replyToMessageId: input.replyToMessageId,
       });
-      setMessages((prev) => prev.map((m) => (m.client_id === input.clientId ? { ...saved, status: "sent" } : m)));
+      setLocals((prev) => prev.map((row) => (row.client_id === input.clientId ? { ...saved, status: "sent" } : row)));
     } catch {
-      setMessages((prev) => prev.map((m) => (m.client_id === input.clientId ? { ...m, status: "failed" } : m)));
+      setLocals((prev) =>
+        prev.map((row) => (row.client_id === input.clientId ? { ...row, status: "failed" } : row)),
+      );
     }
   }
 
   const timeline = useMemo(() => buildTimeline(messages), [messages]);
-  const latestMine = [...messages].reverse().find((m) => m.sender_id === currentUserId && !m.deleted_at);
+  const latestMine = [...messages].reverse().find((row) => row.sender_id === currentUserId && !row.deleted_at);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -255,18 +212,12 @@ export function ChatThread({
           <MoreHorizontal className="size-5" />
         </button>
       </header>
-      {showReconnect ? (
-        <p className="bg-brand/4 px-4 py-1 text-center text-xs text-[#6F7480]" role="status">
-          Đang kết nối lại…
-        </p>
-      ) : null}
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
         onScroll={(e) => {
           const el = e.currentTarget;
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          if (nearBottom.current) setNewBelow(false);
           if (el.scrollTop < 48) void loadOlder();
         }}
       >
@@ -297,20 +248,6 @@ export function ChatThread({
                   onReply={() => setReply(item.message)}
                   onReact={(reaction) => {
                     void toggleReaction(item.message.id, reaction);
-                    setMessages((prev) =>
-                      prev.map((m) => {
-                        if (m.id !== item.message.id) return m;
-                        const mine = m.reactions.find((r) => r.mine);
-                        let next = m.reactions.map((r) => (r.mine ? { ...r, mine: false, count: r.count - 1 } : r)).filter((r) => r.count > 0);
-                        if (!mine || mine.reaction !== reaction) {
-                          const existing = next.find((r) => r.reaction === reaction);
-                          next = existing
-                            ? next.map((r) => (r.reaction === reaction ? { ...r, count: r.count + 1, mine: true } : r))
-                            : [...next, { reaction, count: 1, mine: true }];
-                        }
-                        return { ...m, reactions: next };
-                      }),
-                    );
                   }}
                   onCopy={() => item.message.body && navigator.clipboard.writeText(item.message.body)}
                   onEdit={() => {
@@ -321,7 +258,7 @@ export function ChatThread({
                   onReport={() => void reportMessage(item.message.id)}
                   onRetry={() => {
                     const failed = item.message;
-                    setMessages((prev) => prev.filter((m) => m.id !== failed.id));
+                    setLocals((prev) => prev.filter((row) => row.id !== failed.id));
                     void onSend({
                       body: failed.body,
                       kind: failed.kind,
@@ -340,22 +277,9 @@ export function ChatThread({
           {typing ? <p className="mt-2 pl-10 text-xs text-[#6F7480]">{peer.display_name.split(" ")[0]} đang nhập…</p> : null}
         </div>
       </div>
-      {newBelow ? (
-        <button
-          type="button"
-          className="mx-auto mb-1 rounded-full bg-brand px-3 py-1.5 text-xs text-white"
-          onClick={() => {
-            setNewBelow(false);
-            scrollToEnd(true);
-          }}
-        >
-          <ArrowDown className="mr-1 inline size-3" />
-          Tin nhắn mới
-        </button>
-      ) : null}
-      {initial.blocked ? (
+      {blocked ? (
         <p className="border-t border-brand/8 px-4 py-4 text-center text-sm text-[#6F7480]">
-          {initial.blockedByMe ? "Bạn đã chặn người này. Bỏ chặn để nhắn tin lại." : "Cuộc trò chuyện này hiện không khả dụng."}
+          {blockedByMe ? "Bạn đã chặn người này. Bỏ chặn để nhắn tin lại." : "Cuộc trò chuyện này hiện không khả dụng."}
         </p>
       ) : (
         <MessageComposer
@@ -367,8 +291,8 @@ export function ChatThread({
           onTyping={onTyping}
         />
       )}
-      <ConversationInfo open={infoOpen} onClose={() => setInfoOpen(false)} conversationId={conversationId} peer={peer} muted={initial.muted} blockedByMe={initial.blockedByMe} />
-      <HeaderMenu open={menuOpen} onClose={() => setMenuOpen(false)} peer={peer} onOpenInfo={() => { setMenuOpen(false); setInfoOpen(true); }} conversationId={conversationId} blockedByMe={initial.blockedByMe} />
+      <ConversationInfo open={infoOpen} onClose={() => setInfoOpen(false)} conversationId={conversationId} peer={peer} muted={muted} blockedByMe={blockedByMe} />
+      <HeaderMenu open={menuOpen} onClose={() => setMenuOpen(false)} peer={peer} onOpenInfo={() => { setMenuOpen(false); setInfoOpen(true); }} conversationId={conversationId} blockedByMe={blockedByMe} />
     </div>
   );
 }

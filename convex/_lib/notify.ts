@@ -1,7 +1,7 @@
 import type { MutationCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { optionalIdentity } from "./authz";
-import { pairKey } from "./uniqueness";
+import { areBlocked } from "./blocks";
 
 export type NotifyType =
   | "new_follower"
@@ -43,22 +43,6 @@ function notifyKey(input: {
   }
 }
 
-async function isBlocked(
-  ctx: MutationCtx,
-  left: Id<"profiles">,
-  right: Id<"profiles">,
-): Promise<boolean> {
-  const a = await ctx.db
-    .query("user_blocks")
-    .withIndex("by_pair", (q) => q.eq("pair_key", pairKey(left, right)))
-    .unique();
-  const b = await ctx.db
-    .query("user_blocks")
-    .withIndex("by_pair", (q) => q.eq("pair_key", pairKey(right, left)))
-    .unique();
-  return a !== null || b !== null;
-}
-
 export async function notifyEvent(
   ctx: MutationCtx,
   args: {
@@ -78,7 +62,7 @@ export async function notifyEvent(
   if (args.type === "message" && args.messageId === undefined) {
     return { id: null, duplicate: false };
   }
-  if (await isBlocked(ctx, actorId, args.recipientId)) {
+  if (await areBlocked(ctx, actorId, args.recipientId)) {
     return { id: null, duplicate: false };
   }
   const key = notifyKey({

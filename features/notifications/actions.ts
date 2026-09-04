@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth/session";
 import { convexMutation } from "@/lib/convex/server";
 import type { NotificationKind } from "./keys";
 
-/** Messaging still calls this until Phase 6; social writes notify in-transaction. */
+/** Message and social notifications are written in-transaction via convex/_lib/notify. */
 export async function insertNotification(input: {
   userId: string;
   actorId: string;

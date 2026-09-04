@@ -13,7 +13,12 @@ const MAX_PLACE = 10 * 1024 * 1024;
 
 export const generateUploadUrl = mutation({
   args: {
-    purpose: v.union(v.literal("experience"), v.literal("avatar"), v.literal("place")),
+    purpose: v.union(
+      v.literal("experience"),
+      v.literal("avatar"),
+      v.literal("place"),
+      v.literal("message"),
+    ),
   },
   handler: async (ctx, args) => {
     const { profile } = await requireVerifiedProfile(ctx);
@@ -28,16 +33,16 @@ export const generateUploadUrl = mutation({
   },
 });
 
-function limits(purpose: "experience" | "avatar" | "place", mime: string) {
+function limits(purpose: "experience" | "avatar" | "place" | "message", mime: string) {
   const image = IMAGE_MIME.has(mime);
   const video = VIDEO_MIME.has(mime);
   if (purpose === "avatar") {
     invariant(image, "VALIDATION_FAILED", "Avatar must be an image");
     return MAX_AVATAR;
   }
-  if (purpose === "place") {
-    invariant(image, "VALIDATION_FAILED", "Place media must be an image");
-    return MAX_PLACE;
+  if (purpose === "place" || purpose === "message") {
+    invariant(image, "VALIDATION_FAILED", purpose === "message" ? "Message media must be an image" : "Place media must be an image");
+    return purpose === "message" ? MAX_IMAGE : MAX_PLACE;
   }
   invariant(image || video, "VALIDATION_FAILED", "Unsupported media type");
   return video ? MAX_VIDEO : MAX_IMAGE;
@@ -46,7 +51,12 @@ function limits(purpose: "experience" | "avatar" | "place", mime: string) {
 export const finalize = mutation({
   args: {
     storageId: v.id("_storage"),
-    purpose: v.union(v.literal("experience"), v.literal("avatar"), v.literal("place")),
+    purpose: v.union(
+      v.literal("experience"),
+      v.literal("avatar"),
+      v.literal("place"),
+      v.literal("message"),
+    ),
     mimeType: v.string(),
     byteSize: v.number(),
   },

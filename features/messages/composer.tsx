@@ -3,17 +3,14 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { ImagePlus, MapPin, Newspaper, Plus, Send, Smile, X } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { createClient } from "@/lib/supabase/client";
 import { validateMediaFile } from "@/lib/media";
-import { getAttachablePlaces, getAttachablePosts } from "./actions";
+import { finalizeMessageMediaAction, generateMessageUploadUrlAction, getAttachablePlaces, getAttachablePosts } from "./actions";
 import { cn } from "@/lib/utils";
 import type { ChatKind } from "./types";
 
 const QUICK_EMOJI = ["😊", "❤️", "👍", "😂", "👋"];
 
 export function MessageComposer({
-  conversationId,
-  userId,
   disabled,
   reply,
   onCancelReply,
@@ -64,12 +61,21 @@ export function MessageComposer({
         if (image) {
           const check = validateMediaFile(image);
           if (!check.ok) throw new Error(check.error);
-          const supabase = createClient();
-          const ext = image.name.split(".").pop() ?? "jpg";
-          const path = `${userId}/${conversationId}/${clientId}.${ext}`;
-          const { error } = await supabase.storage.from("message-media").upload(path, image, { contentType: image.type });
-          if (error) throw error;
-          imagePayload = { storagePath: path };
+          const uploadUrl = await generateMessageUploadUrlAction();
+          const uploaded = await fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": image.type },
+            body: image,
+          });
+          if (!uploaded.ok) throw new Error("UPLOAD_FAILED");
+          const body = (await uploaded.json()) as { storageId?: string };
+          if (!body.storageId) throw new Error("UPLOAD_FAILED");
+          await finalizeMessageMediaAction({
+            storageId: body.storageId,
+            mimeType: image.type,
+            byteSize: image.size,
+          });
+          imagePayload = { storageId: body.storageId };
         }
         await onSend({
           body: text || null,
