@@ -1,4 +1,5 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import { convexMutation, convexQueryAuthed } from "@/lib/convex/server";
 import { getSessionUser } from "@/lib/auth/session";
 
 export type InterestEntityType = "place" | "mood" | "author" | "post" | "category" | "area";
@@ -22,6 +23,24 @@ const WEIGHTS: Record<string, number> = {
   place_shared_to_message: 2.2,
 };
 
+function entityProperty(
+  entityType: InterestEntityType,
+  entityId: string,
+): Record<string, string | number | boolean | null> {
+  switch (entityType) {
+    case "place":
+      return { place_id: entityId };
+    case "mood":
+      return { mood_id: entityId };
+    case "author":
+      return { target_user_id: entityId };
+    case "post":
+      return { post_id: entityId };
+    default:
+      return { entity_id: entityId };
+  }
+}
+
 export async function recordInterestSignal(input: {
   entityType: InterestEntityType;
   entityId?: string | null;
@@ -31,34 +50,20 @@ export async function recordInterestSignal(input: {
   const session = await getSessionUser().catch(() => null);
   if (!session || !input.entityId) return;
   const weight = input.weight ?? WEIGHTS[input.signalType] ?? 1;
-  const supabase = await createServerSupabase();
-  await supabase.from("user_interest_signals").insert({
-    user_id: session.user.id,
-    entity_type: input.entityType,
-    entity_id: input.entityId,
-    signal_type: input.signalType,
-    weight,
+  await convexMutation(api.analytics.recordEvent, {
+    eventName: input.signalType,
+    properties: { ...entityProperty(input.entityType, input.entityId), weight },
   });
 }
 
-export async function getUserTaste(userId: string) {
-  const supabase = await createServerSupabase();
-  const since = new Date(Date.now() - 45 * 24 * 3600_000).toISOString();
-  const { data } = await supabase
-    .from("user_interest_signals")
-    .select("entity_type, entity_id, weight")
-    .eq("user_id", userId)
-    .gte("created_at", since)
-    .limit(400);
-  const places = new Map<string, number>();
-  const moods = new Map<string, number>();
-  const authors = new Map<string, number>();
-  for (const row of data ?? []) {
-    if (!row.entity_id) continue;
-    const target =
-      row.entity_type === "place" ? places : row.entity_type === "mood" ? moods : row.entity_type === "author" ? authors : null;
-    if (!target) continue;
-    target.set(row.entity_id, (target.get(row.entity_id) ?? 0) + Number(row.weight));
-  }
-  return { places, moods, authors };
+export async function getUserTaste(userId?: string) {
+  void userId;
+  const session = await getSessionUser().catch(() => null);
+  if (!session) return { places: new Map<string, number>(), moods: new Map<string, number>(), authors: new Map<string, number>() };
+  const taste = await convexQueryAuthed(api.analytics.taste, {});
+  return {
+    places: new Map(Object.entries(taste.places)),
+    moods: new Map(Object.entries(taste.moods)),
+    authors: new Map(Object.entries(taste.authors)),
+  };
 }

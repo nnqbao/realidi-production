@@ -137,12 +137,20 @@ export async function hydratePosts(
       type: "image" | "video";
       url: string;
       thumbnailUrl: string | null;
-    }> = mediaRows.map((row) => ({
-      id: row._id,
-      type: row.media_type,
-      url: String(row.storage_id),
-      thumbnailUrl: row.thumbnail_storage_id ? String(row.thumbnail_storage_id) : String(row.storage_id),
-    }));
+    }> = [];
+    for (const row of mediaRows) {
+      const url = await ctx.storage.getUrl(row.storage_id);
+      if (!url) continue;
+      const thumb = row.thumbnail_storage_id
+        ? await ctx.storage.getUrl(row.thumbnail_storage_id)
+        : url;
+      media.push({
+        id: row._id,
+        type: row.media_type,
+        url,
+        thumbnailUrl: thumb,
+      });
+    }
     if (media.length === 0 && place?.cover_image_path) {
       media.push({
         id: "cover",
@@ -165,7 +173,13 @@ export async function hydratePosts(
       liked: viewer.likedIds.has(post._id),
       saved: viewer.savedIds.has(post._id),
       followingAuthor: viewer.followingIds.has(post.author_id),
-      author: toAuthorLite(author),
+      author: {
+        ...toAuthorLite(author),
+        avatar_path:
+          author.avatar_storage_id === undefined
+            ? null
+            : await ctx.storage.getUrl(author.avatar_storage_id),
+      },
       place: place
         ? {
             id: place._id,

@@ -1,12 +1,11 @@
 /**
- * Video processing is intentionally not implemented in MVP.
- * Upload accepts video MIME types and stores the original file.
- * Transcoding / poster generation should plug in here later.
+ * Video is stored as the original file with processing_status=ready.
+ * There is no queued/transcode pipeline in this phase.
  */
 
 export type VideoProcessingJob = {
   mediaId: string;
-  storagePath: string;
+  storageId: string;
 };
 
 export async function enqueueVideoProcessing(job: VideoProcessingJob): Promise<void> {
@@ -15,3 +14,4 @@ export async function enqueueVideoProcessing(job: VideoProcessingJob): Promise<v
 }
 
 export const VIDEO_PROCESSING_AVAILABLE = false;
+export const VIDEO_STORED_AS_ORIGINAL = true;

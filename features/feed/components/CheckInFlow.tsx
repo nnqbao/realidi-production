@@ -5,8 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase/client";
-import { validateMediaFile } from "@/lib/media";
+import { uploadExperienceFiles } from "@/lib/media/upload";
 import { createExperienceAction } from "@/features/experiences/actions";
 import { localizeName } from "@/lib/i18n";
 import type { Mood } from "@/types/database";
@@ -14,7 +13,6 @@ import type { Mood } from "@/types/database";
 export function CheckInFlow({
   places,
   moods,
-  userId,
   initialPlaceId,
   onDone,
 }: {
@@ -79,25 +77,13 @@ export function CheckInFlow({
         onClick={() =>
           start(async () => {
             try {
-              const mediaPaths: string[] = [];
-              if (file) {
-                const check = validateMediaFile(file);
-                if (!check.ok) throw new Error(check.error);
-                const supabase = createClient();
-                const ext = file.name.split(".").pop() ?? "jpg";
-                const path = `${userId}/${crypto.randomUUID()}.${ext}`;
-                const { error } = await supabase.storage.from("experience-media").upload(path, file, {
-                  contentType: file.type,
-                });
-                if (error) throw error;
-                mediaPaths.push(path);
-              }
+              const mediaStorageIds = file ? await uploadExperienceFiles([file]) : [];
               const result = await createExperienceAction({
                 postType: "check_in",
                 placeId,
                 caption: caption || null,
                 moodRatings: moodId ? [{ moodId, rating: 4 }] : [],
-                mediaPaths,
+                mediaStorageIds,
               });
               if (result?.error) toast.error("Không check-in được");
               else onDone?.();

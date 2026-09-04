@@ -1,11 +1,13 @@
 "use server";
 
-import { createServerSupabase } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { requireUser } from "@/lib/auth/session";
+import { convexMutation } from "@/lib/convex/server";
 import type { NotificationKind } from "./keys";
-import { notificationIdempotencyKey } from "./keys";
 
+/** Messaging still calls this until Phase 6; social writes notify in-transaction. */
 export async function insertNotification(input: {
   userId: string;
   actorId: string;
@@ -17,66 +19,24 @@ export async function insertNotification(input: {
   messageId?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  if (input.userId === input.actorId) return { id: null as string | null, duplicate: false };
-  const supabase = await createServerSupabase();
-  const { data: blocked } = await supabase.rpc("is_blocked_with", { other: input.userId });
-  if (blocked) return { id: null as string | null, duplicate: false };
-  if (input.type === "message" && !input.messageId) {
-    return { id: null as string | null, duplicate: false };
-  }
-  const key = notificationIdempotencyKey({
-    type: input.type,
-    actorId: input.actorId,
-    recipientId: input.userId,
-    postId: input.postId,
-    commentId: input.commentId,
-    conversationId: input.conversationId,
-    invitationId: input.invitationId,
-    messageId: input.messageId,
-  });
-  const metadata = {
-    ...(input.metadata ?? {}),
-    ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
-    ...(input.postId ? { post_id: input.postId } : {}),
-    ...(input.commentId ? { comment_id: input.commentId } : {}),
-    ...(input.messageId ? { message_id: input.messageId } : {}),
-  };
-  const { data, error } = await supabase.rpc("notify_event", {
-    p_user_id: input.userId,
-    p_actor_id: input.actorId,
-    p_type: input.type,
-    p_post_id: input.postId ?? undefined,
-    p_comment_id: input.commentId ?? undefined,
-    p_idempotency_key: key ?? undefined,
-    p_metadata: metadata,
-  });
-  if (error) return { id: null as string | null, duplicate: false, error: error.message };
-  return { id: (data as string | null) ?? null, duplicate: false };
+  void input;
+  return { id: null as string | null, duplicate: false };
 }
 
 export async function markNotificationRead(id: string) {
-  const { user } = await requireUser();
-  const supabase = await createServerSupabase();
-  const { error } = await supabase
-    .from("notifications")
-    .update({ read_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .is("read_at", null);
-  if (error) return { error: error.message };
+  await requireUser();
+  try {
+    await convexMutation(api.notifications.markRead, { id: id as Id<"notifications"> });
+  } catch {
+    return { error: "NOT_FOUND" };
+  }
   revalidatePath("/notifications");
   return { ok: true as const };
 }
 
 export async function markAllNotificationsRead() {
-  const { user } = await requireUser();
-  const supabase = await createServerSupabase();
-  const { error } = await supabase
-    .from("notifications")
-    .update({ read_at: new Date().toISOString() })
-    .eq("user_id", user.id)
-    .is("read_at", null);
-  if (error) return { error: error.message };
+  await requireUser();
+  await convexMutation(api.notifications.markAllRead, {});
   revalidatePath("/notifications");
   return { ok: true as const };
 }

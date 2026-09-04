@@ -123,7 +123,7 @@ export const bySlug = query({
               warned_at: null,
             }
           : null,
-        mediaPath: media?.storage_id ?? null,
+        mediaPath: media ? await ctx.storage.getUrl(media.storage_id) : null,
       });
     }
 

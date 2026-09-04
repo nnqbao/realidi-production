@@ -5,8 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase/client";
-import { validateMediaFile } from "@/lib/media";
+import { uploadExperienceFiles } from "@/lib/media/upload";
 import { createExperienceAction, saveExperienceDraftAction } from "@/features/experiences/actions";
 import { localizeName } from "@/lib/i18n";
 import type { Mood } from "@/types/database";
@@ -17,7 +16,6 @@ type Intent = "photo" | "video" | "check_in" | "mood" | "default";
 export function CreateExperienceFlow({
   places,
   moods,
-  userId,
   compact = false,
   initialIntent = "default",
 }: {
@@ -41,22 +39,7 @@ export function CreateExperienceFlow({
   const submitting = useRef(false);
 
   async function uploadAll() {
-    const supabase = createClient();
-    const paths: string[] = [];
-    for (const file of files) {
-      const check = validateMediaFile(file, { allowVideo: true });
-      if (!check.ok) throw new Error(check.error);
-      const ext = file.name.split(".").pop() ?? "jpg";
-      const path = `${userId}/${crypto.randomUUID()}.${ext}`;
-      const blob = file.type.startsWith("image/") ? await (await import("@/lib/media/compress")).compressImage(file) : file;
-      const { error } = await supabase.storage.from("experience-media").upload(path, blob, {
-        contentType: file.type,
-        upsert: false,
-      });
-      if (error) throw error;
-      paths.push(path);
-    }
-    return paths;
+    return await uploadExperienceFiles(files);
   }
 
   function inferType(): "experience" | "check_in" | "photo" | "video" {
@@ -68,7 +51,7 @@ export function CreateExperienceFlow({
     return "experience";
   }
 
-  function payload(mediaPaths: string[]) {
+  function payload(mediaStorageIds: string[]) {
     return {
       placeId: placeId || null,
       postType: inferType(),
@@ -78,7 +61,7 @@ export function CreateExperienceFlow({
       worthIt: worthIt === "" ? null : worthIt,
       spendPerPerson: spend ? Number(spend) : null,
       visitContext: context || null,
-      mediaPaths,
+      mediaStorageIds,
     };
   }
 
@@ -237,8 +220,8 @@ export function CreateExperienceFlow({
               if (submitting.current) return;
               submitting.current = true;
               try {
-                const mediaPaths = await uploadAll();
-                await saveExperienceDraftAction(payload(mediaPaths));
+                const mediaStorageIds = await uploadAll();
+                await saveExperienceDraftAction(payload(mediaStorageIds));
                 toast.success("Đã lưu nháp");
               } catch {
                 toast.error("Không lưu nháp được");
@@ -258,8 +241,8 @@ export function CreateExperienceFlow({
               if (submitting.current) return;
               submitting.current = true;
               try {
-                const mediaPaths = await uploadAll();
-                const result = await createExperienceAction(payload(mediaPaths));
+                const mediaStorageIds = await uploadAll();
+                const result = await createExperienceAction(payload(mediaStorageIds));
                 if (result?.error) toast.error("Không đăng được");
               } catch {
                 toast.error("Không đăng được trải nghiệm");

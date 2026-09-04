@@ -53,22 +53,25 @@ export const onboardingSchema = z.object({
   timeMinutes: z.number().int().positive().optional().nullable(),
 });
 
+/** Accepts leftover UUID fixtures and live Convex document ids. */
+export const entityIdSchema = z.string().min(8).max(64);
+
 export const discoveryFiltersSchema = z.object({
-  moodId: z.string().uuid().optional().nullable(),
+  moodId: entityIdSchema.optional().nullable(),
   radiusMeters: z.coerce.number().int().positive().max(50_000).optional().nullable(),
   budgetMax: z.coerce.number().int().positive().optional().nullable(),
   timeMinutes: z.coerce.number().int().positive().max(24 * 60).optional().nullable(),
   crowd: z.enum(["quiet", "normal", "busy", "very_busy"]).optional().nullable(),
   visitContext: z.enum(["solo", "couple", "friends", "family", "work", "other"]).optional().nullable(),
-  categoryId: z.string().uuid().optional().nullable(),
-  styleId: z.string().uuid().optional().nullable(),
+  categoryId: entityIdSchema.optional().nullable(),
+  styleId: entityIdSchema.optional().nullable(),
   q: z.string().max(80).optional().nullable(),
   lat: z.coerce.number().optional().nullable(),
   lng: z.coerce.number().optional().nullable(),
 });
 
 export const experienceCreateSchema = z.object({
-  placeId: z.string().uuid().optional().nullable(),
+  placeId: entityIdSchema.optional().nullable(),
   postType: z.enum(["experience", "check_in", "photo", "video", "community", "question"]).optional(),
   caption: z.string().max(2000).optional().nullable(),
   visitDate: z.string().optional().nullable(),
@@ -76,7 +79,7 @@ export const experienceCreateSchema = z.object({
   moodRatings: z
     .array(
       z.object({
-        moodId: z.string().uuid(),
+        moodId: entityIdSchema,
         rating: z.number().int().min(1).max(5),
       }),
     )
@@ -88,6 +91,7 @@ export const experienceCreateSchema = z.object({
   visitDayType: z.enum(["weekday", "weekend", "holiday"]).optional().nullable(),
   visitTimePeriod: z.enum(["morning", "afternoon", "evening", "night"]).optional().nullable(),
   mediaPaths: z.array(z.string().min(1)).max(8).default([]),
+  mediaStorageIds: z.array(entityIdSchema).max(8).default([]),
   areaLabel: z.string().max(80).optional().nullable(),
   budgetMax: z.number().int().positive().optional().nullable(),
   timeLabel: z.string().max(40).optional().nullable(),
@@ -95,14 +99,14 @@ export const experienceCreateSchema = z.object({
 });
 
 export const commentSchema = z.object({
-  postId: z.string().uuid(),
+  postId: entityIdSchema,
   body: z.string().min(1).max(2000),
-  parentId: z.string().uuid().optional().nullable(),
+  parentId: entityIdSchema.optional().nullable(),
 });
 
 export const reportSchema = z.object({
   targetType: z.enum(["post", "comment", "user", "place", "message", "conversation"]),
-  targetId: z.string().uuid(),
+  targetId: entityIdSchema,
   reason: z.enum([
     "spam",
     "harassment",
@@ -118,8 +122,8 @@ export const reportSchema = z.object({
 });
 
 export const verifyVisitSchema = z.object({
-  placeId: z.string().uuid(),
-  experiencePostId: z.string().uuid().optional().nullable(),
+  placeId: entityIdSchema,
+  experiencePostId: entityIdSchema.optional().nullable(),
   latitude: z.number(),
   longitude: z.number(),
   accuracyMeters: z.number().optional().nullable(),
