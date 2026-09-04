@@ -1,3 +1,5 @@
+import type { GenericId } from "convex/values";
+
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 type Row = Record<string, unknown>;
@@ -794,3 +796,9 @@ export type Database = {
     CompositeTypes: Record<string, never>;
   };
 };
+
+export type DomainTableName = keyof Database["public"]["Tables"];
+export type ConvexId<TableName extends DomainTableName> = GenericId<TableName>;
+export type SerializedConvexId = string;
+export type SerializedDocument<T extends { _id: GenericId<string> }> =
+  Omit<T, "_id" | "_creationTime"> & { id: SerializedConvexId };

@@ -57,31 +57,51 @@ Events are written to `product_events` (first-party) and optionally forwarded th
 
 ```bash
 cp .env.example .env.local
-# fill Supabase keys (and Mapbox if you want static maps)
+# Fill the current Supabase values for the web application.
 npm install
-npm run dev
+./scripts/convex-local.sh up
+./scripts/convex-admin-key.sh
+./scripts/convex-health.sh
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Guests can browse Discover without an account. If env vars are missing, Discover shows a setup state instead of pretending the product works.
+The repository-scoped self-hosted Convex backend, HTTP actions, dashboard, and
+Mailpit bind only to loopback. On this workstation, existing SSH listeners
+occupy the planned `3220`, `3221`, and `6792` range, so the tested endpoints are
+`3222`, `3223`, and `6799`; Mailpit remains on `1026`/`8026`. The Compose file
+uses pinned images and persistent named volumes. A `site-loopback` sidecar
+forwards container-localhost `:3223` to the site process so the backend can
+discover its own JWKS at the host issuer URL.
 
-## Supabase setup
+Run `npm run dev` separately only when you need the web app. Phases 0–2 provide
+the local Convex platform/schema/seed foundation, and the Phase 3 authentication
+backend is now implemented and deployed: registration, sign-in with the
+persistent 8-attempt lockout, email verification, password reset, authenticated
+password change, and current/other/all session revocation. The missing lockout
+and anti-enumeration hooks in `@convex-dev/auth` 0.0.95 are covered by the
+vendored provider in `convex/_providers/Password.ts`.
 
-1. Create a project (region close to Vietnam, e.g. Singapore).
-2. Enable the **PostGIS** extension (`extensions.postgis`).
-3. Run `supabase/migrations/*.sql` in order (SQL editor or CLI).
-4. Run `supabase/seed.sql` for moods, styles, categories, and 22 HCMC places.
-5. Create storage buckets if the storage migration did not: `avatars`, `experience-media`, `place-media`.
-6. Optional demo social graph:
+The web application now uses that Convex auth backend for login, signup,
+verification, password reset, password change, session revocation, profile
+edit, onboarding, and account gates. Product reads (feed, places, messages)
+still go through Supabase until Phase 4; a signed-in Convex user will see
+empty product data there. See `AUTH_ADMIN.md` for the function surface.
+
+`./scripts/convex-local.sh down` stops containers without deleting data. Volume
+removal is intentionally manual and destructive:
 
 ```bash
-npm run seed
+docker compose -f compose.convex.yml down --volumes
 ```
 
-Demo admin (after seed-demo): `admin@felt.local` / `FeltDemo!2026` — promote via Admin → Users if the trigger left the role as `user` (role is never taken from client metadata).
+## Local backend
 
-### Google login
+Convex is the target application data plane. Editorial taxonomy and all 22 HCMC
+places are seeded from the authoritative SQL inventory with `npm run
+convex:seed`; the operation is idempotent. Optional social/demo data requires
+explicit credentials in ignored local environment variables. No demo password
+is stored in the repository.
 
-Architecture is in place (`signInWithOAuth({ provider: "google" })`). Enable the Google provider in the Supabase dashboard, add the redirect URL `/auth/callback`, then set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true`. Until then the button is hidden and the limitation is documented in the login UI.
+Google OAuth is intentionally out of scope for the local migration.
 
 ### Mapbox
 

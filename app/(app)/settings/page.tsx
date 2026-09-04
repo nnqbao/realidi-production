@@ -15,12 +15,12 @@ export default async function SettingsPage() {
       <div className="mt-8 max-w-lg space-y-4">
         {session.gate === "unverified" ? (
           <p className="rounded-2xl border border-brand/16 bg-brand/6 px-4 py-3 text-sm">
-            Email chưa được xác minh. Kiểm tra hộp thư hoặc gửi lại từ mục bảo mật bên dưới.
+            Email chưa được xác minh. Kiểm tra hộp thư lấy mã 8 số, hoặc gửi lại từ mục bảo mật bên dưới.
           </p>
         ) : null}
         {isStaff(session.profile.role) ? (
           <p className="rounded-2xl border border-brand/16 bg-brand/6 px-4 py-3 text-sm">
-            Tài khoản quản trị nên bật xác minh 2 bước trong Supabase Dashboard (Authentication → MFA).
+            Tài khoản quản trị nên dùng mật khẩu riêng và thu hồi phiên lạ ngay khi thấy thiết bị không nhận ra.
           </p>
         ) : null}
         <ActivityStatusToggle initial={session.profile.show_activity_status !== false} />

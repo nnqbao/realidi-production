@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { completeOnboardingAction, skipOnboardingAction } from "@/features/auth/actions";
 import { localizeName } from "@/lib/i18n";
-import type { ExperienceStyle, Mood } from "@/types/database";
+
+type CatalogItem = { id: string; name_vi: string; name_en: string };
 
 const contexts = [
   { id: "solo", label: "Một mình" },
@@ -18,9 +19,9 @@ export function OnboardingFlow({
   desired,
   styles,
 }: {
-  currentStates: Mood[];
-  desired: Mood[];
-  styles: ExperienceStyle[];
+  currentStates: CatalogItem[];
+  desired: CatalogItem[];
+  styles: CatalogItem[];
 }) {
   const [step, setStep] = useState(0);
   const [current, setCurrent] = useState<string | null>(null);
@@ -134,7 +135,16 @@ export function OnboardingFlow({
             Bắt đầu khám phá
           </Button>
         )}
-        <Button type="button" variant="link" onClick={() => start(() => skipOnboardingAction())}>
+        <Button
+          type="button"
+          variant="link"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              await skipOnboardingAction();
+            })
+          }
+        >
           Bỏ qua, khám phá ngay
         </Button>
       </div>

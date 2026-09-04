@@ -2,8 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { applyAuthTokens, convexAction, convexMutation, convexQuery, convexToken } from "@/lib/convex/server";
+import { convexErrorCode, loginErrorCode } from "@/lib/convex/result";
 import {
   loginSchema,
   profileUpdateSchema,
@@ -16,25 +18,41 @@ import {
 import { PROFILE_USERNAME_FIELD } from "@/features/profile/edit-state";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { recordProductEvent } from "@/features/social/actions";
-import { onboardingSchema } from "@/lib/validation";
 import { getSessionUser, requireUser } from "@/lib/auth/session";
 import { safeReturnPath } from "@/lib/auth/return-to";
-import { accountGate, gateMessage, normalizeEmail } from "@/lib/auth/account";
-import { clearLoginFailures, getLockout, recordLoginFailure } from "@/lib/auth/lockout";
-import { AUTH_COOKIE_OPTIONS } from "@/lib/supabase/cookies";
-import type { Profile } from "@/types/database";
+import { gateMessage, normalizeEmail } from "@/lib/auth/account";
+import type { VisitContext } from "@/types/database";
 
 const GENERIC_LOGIN = "INVALID_CREDENTIALS";
+
+async function track(
+  eventName: string,
+  properties: Record<string, string | number | boolean | null | undefined> = {},
+) {
+  try {
+    await recordProductEvent(eventName, properties);
+  } catch {
+    // Product analytics still writes through the leftover Supabase path.
+  }
+}
+
+async function signInWithPasswordProvider(params: Record<string, string>) {
+  return await convexAction(api.auth.signIn, {
+    provider: "password",
+    params,
+  });
+}
 
 export async function checkUsernameAvailable(username: string) {
   const parsed = usernameSchema.safeParse(normalizeUsername(username));
   if (!parsed.success) return { available: false, reason: "INVALID" as const };
-  const supabase = await createServerSupabase();
-  const session = await getSessionUser().catch(() => null);
-  let query = supabase.from("profiles").select("id").eq("username", parsed.data);
-  if (session) query = query.neq("id", session.user.id);
-  const { data } = await query.maybeSingle();
-  return { available: !data, reason: data ? ("TAKEN" as const) : ("OK" as const) };
+  const token = await convexToken();
+  const result = await convexQuery(
+    api.profiles.usernameAvailable,
+    { username: parsed.data },
+    token,
+  );
+  return { available: result.available, reason: result.available ? ("OK" as const) : ("TAKEN" as const) };
 }
 
 export async function signUpAction(formData: FormData) {
@@ -49,32 +67,41 @@ export async function signUpAction(formData: FormData) {
   if (!parsed.success) return { error: "INVALID" as const };
   if (!rateLimit(`signup:${parsed.data.email}`, 5, 15 * 60_000)) return { error: "RATE_LIMIT" as const };
 
-  const supabase = await createServerSupabase();
-  const taken = await supabase.from("profiles").select("id").eq("username", parsed.data.username).maybeSingle();
-  if (taken.data) return { error: "USERNAME_TAKEN" as const };
-  await recordProductEvent("signup_started", {});
-  const appUrl = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const { data, error } = await supabase.auth.signUp({
-    email: parsed.data.email,
-    password: parsed.data.password,
-    options: {
-      data: {
-        username: parsed.data.username,
-        display_name: parsed.data.displayName,
-        locale: "vi",
-      },
-      emailRedirectTo: `${appUrl}/auth/callback?next=/onboarding`,
-    },
+  const taken = await convexQuery(api.profiles.usernameAvailable, {
+    username: parsed.data.username,
   });
-  if (error) {
-    const message = error.message.toLowerCase();
-    if (message.includes("already") || message.includes("registered") || message.includes("exists")) {
-      return { error: "GENERIC" as const };
-    }
+  if (!taken.available) return { error: "USERNAME_TAKEN" as const };
+
+  await track("signup_started");
+  try {
+    await signInWithPasswordProvider({
+      flow: "signUp",
+      email: parsed.data.email,
+      password: parsed.data.password,
+      name: parsed.data.displayName,
+      username: parsed.data.username,
+    });
+  } catch {
     return { error: "GENERIC" as const };
   }
-  await recordProductEvent("signup_completed", {});
-  if (!data.session) return { needsEmail: true as const, email: parsed.data.email };
+  await track("signup_completed");
+  return { needsEmail: true as const, email: parsed.data.email };
+}
+
+export async function verifyEmailAction(formData: FormData) {
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  if (!email || !/^\d{8}$/.test(code)) return { error: "INVALID" as const };
+  try {
+    const result = await signInWithPasswordProvider({
+      flow: "email-verification",
+      email,
+      code,
+    });
+    await applyAuthTokens(result.tokens);
+  } catch {
+    return { error: "INVALID" as const };
+  }
   redirect("/onboarding");
 }
 
@@ -85,81 +112,90 @@ export async function loginAction(formData: FormData) {
   });
   if (!parsed.success) return { error: GENERIC_LOGIN };
   if (!rateLimit(`login:${parsed.data.email}`, 12, 10 * 60_000)) return { error: "RATE_LIMIT" as const };
-  const lock = await getLockout(parsed.data.email);
-  if (lock.locked) return { error: "LOCKED" as const };
 
-  const supabase = await createServerSupabase();
-  const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
-  if (error || !data.user) {
-    await recordLoginFailure(parsed.data.email);
-    await recordProductEvent("login_failed", {});
-    return { error: GENERIC_LOGIN };
+  try {
+    const result = await signInWithPasswordProvider({
+      flow: "signIn",
+      email: parsed.data.email,
+      password: parsed.data.password,
+    });
+    if (!result.tokens) {
+      await track("login_failed");
+      return { error: GENERIC_LOGIN };
+    }
+    await applyAuthTokens(result.tokens);
+  } catch (error) {
+    await track("login_failed");
+    return { error: loginErrorCode(error) };
   }
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).maybeSingle();
-  const gate = accountGate((profile ?? {}) as Profile, Boolean(data.user.email_confirmed_at));
-  if (gate === "deleted" || gate === "banned" || gate === "suspended") {
-    await supabase.auth.signOut({ scope: "local" });
-    await recordProductEvent("login_failed", {});
-    return { error: gate };
-  }
-
-  await clearLoginFailures(parsed.data.email);
-  await recordProductEvent("login_succeeded", {});
-  const remember = formData.get("remember") === "on";
-  const jar = await cookies();
-  jar.set("realidi-remember", remember ? "1" : "0", {
-    ...AUTH_COOKIE_OPTIONS,
-    httpOnly: true,
-    maxAge: remember ? 60 * 60 * 24 * 30 : 60 * 60 * 12,
-  });
+  await track("login_succeeded");
   redirect(safeReturnPath(formData.get("next"), "/home"));
 }
 
 export async function logoutAction() {
-  const supabase = await createServerSupabase();
-  await supabase.auth.signOut({ scope: "local" });
+  try {
+    await convexAction(api.auth.signOut, {});
+  } catch {
+    // Clear cookies even if the session is already gone.
+  }
+  await applyAuthTokens(null);
   redirect("/home");
 }
 
 export async function logoutOthersAction() {
-  const supabase = await createServerSupabase();
-  await supabase.auth.signOut({ scope: "others" });
+  await convexAction(api.sessions.revokeOthers, {});
   revalidatePath("/settings");
   return { ok: true as const };
 }
 
 export async function logoutAllAction() {
-  const supabase = await createServerSupabase();
-  await supabase.auth.signOut({ scope: "global" });
+  try {
+    await convexAction(api.sessions.revokeAll, {});
+  } catch {
+    // Still drop the local cookies.
+  }
+  await applyAuthTokens(null);
   redirect("/login");
 }
 
 export async function resetPasswordAction(formData: FormData) {
-  const parsed = resetPasswordSchema.safeParse({ email: normalizeEmail(String(formData.get("email") ?? "")) });
+  const parsed = resetPasswordSchema.safeParse({
+    email: normalizeEmail(String(formData.get("email") ?? "")),
+  });
   if (!parsed.success) return { ok: true as const };
   if (!rateLimit(`reset:${parsed.data.email}`, 3, 15 * 60_000)) return { ok: true as const };
-  const supabase = await createServerSupabase();
-  const appUrl = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
-  await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo: `${appUrl}/auth/callback?next=/reset-password/update`,
-  });
-  await recordProductEvent("password_reset_requested", {});
+  try {
+    await signInWithPasswordProvider({ flow: "reset", email: parsed.data.email });
+  } catch {
+    // Same success shape for every address.
+  }
+  await track("password_reset_requested");
   return { ok: true as const };
 }
 
 export async function updatePasswordAction(formData: FormData) {
-  const parsed = updatePasswordSchema.safeParse({ password: String(formData.get("password") ?? "") });
+  const parsed = updatePasswordSchema.safeParse({
+    password: String(formData.get("password") ?? ""),
+  });
   if (!parsed.success) return { error: "INVALID" as const };
   const confirm = String(formData.get("confirmPassword") ?? "");
   if (confirm && confirm !== parsed.data.password) return { error: "MISMATCH" as const };
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
-  if (error) return { error: "INVALID" as const };
-  if (formData.get("signOutOthers") === "on") {
-    await supabase.auth.signOut({ scope: "others" });
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  if (!email || !/^\d{8}$/.test(code)) return { error: "INVALID" as const };
+  try {
+    const result = await signInWithPasswordProvider({
+      flow: "reset-verification",
+      email,
+      code,
+      newPassword: parsed.data.password,
+    });
+    await applyAuthTokens(result.tokens);
+  } catch {
+    return { error: "INVALID" as const };
   }
-  await recordProductEvent("password_reset_completed", {});
+  await track("password_reset_completed");
   redirect("/settings?password=updated");
 }
 
@@ -169,33 +205,35 @@ export async function resendVerificationAction(email?: string) {
   const target = normalized || session?.user.email || "";
   if (!target) return { error: "INVALID" as const };
   if (!rateLimit(`verify:${target}`, 3, 15 * 60_000)) return { error: "RATE_LIMIT" as const };
-  const supabase = await createServerSupabase();
-  const appUrl = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const { error } = await supabase.auth.resend({
-    type: "signup",
-    email: target,
-    options: { emailRedirectTo: `${appUrl}/auth/callback?next=/onboarding` },
-  });
-  if (error) return { ok: true as const };
+  try {
+    await signInWithPasswordProvider({ flow: "email-verification", email: target });
+  } catch {
+    // Same success shape whether or not the address exists.
+  }
   return { ok: true as const };
 }
 
 export async function changePasswordAction(formData: FormData) {
   await requireUser();
   const current = String(formData.get("currentPassword") ?? "");
-  const parsed = updatePasswordSchema.safeParse({ password: String(formData.get("password") ?? "") });
-  if (!parsed.success || current.length < 1) return { error: "INVALID" as const };
-  if (String(formData.get("confirmPassword") ?? "") !== parsed.data.password) return { error: "MISMATCH" as const };
-  const supabase = await createServerSupabase();
-  const session = await requireUser();
-  const { error: check } = await supabase.auth.signInWithPassword({
-    email: session.user.email ?? "",
-    password: current,
+  const parsed = updatePasswordSchema.safeParse({
+    password: String(formData.get("password") ?? ""),
   });
-  if (check) return { error: "CURRENT" as const };
-  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
-  if (error) return { error: "INVALID" as const };
-  if (formData.get("signOutOthers") === "on") await supabase.auth.signOut({ scope: "others" });
+  if (!parsed.success || current.length < 1) return { error: "INVALID" as const };
+  if (String(formData.get("confirmPassword") ?? "") !== parsed.data.password) {
+    return { error: "MISMATCH" as const };
+  }
+  try {
+    await convexAction(api.account.changePassword, {
+      currentPassword: current,
+      newPassword: parsed.data.password,
+      signOutOtherSessions: formData.get("signOutOthers") === "on",
+    });
+  } catch (error) {
+    const code = convexErrorCode(error);
+    if (code === "INVALID_CREDENTIALS") return { error: "CURRENT" as const };
+    return { error: "INVALID" as const };
+  }
   revalidatePath("/settings");
   return { ok: true as const };
 }
@@ -203,28 +241,23 @@ export async function changePasswordAction(formData: FormData) {
 export { gateMessage };
 
 export async function getEditableProfile() {
-  const { user } = await requireUser();
-  const supabase = await createServerSupabase();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, username, display_name, bio")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (error) return { error: "LOAD_FAILED" as const };
-  if (!data?.username?.trim()) return { error: "NO_USERNAME" as const };
+  const session = await requireUser();
+  if (!session.profile.username.trim()) return { error: "NO_USERNAME" as const };
   return {
     ok: true as const,
     profile: {
-      displayName: data.display_name,
-      username: data.username,
-      bio: data.bio ?? "",
+      displayName: session.profile.display_name,
+      username: session.profile.username,
+      bio: session.profile.bio ?? "",
     },
   };
 }
 
 export async function updateProfileAction(formData: FormData) {
-  const { user, profile } = await requireUser();
-  const username = normalizeUsername(String(formData.get(PROFILE_USERNAME_FIELD) ?? formData.get("username") ?? ""));
+  const { profile } = await requireUser();
+  const username = normalizeUsername(
+    String(formData.get(PROFILE_USERNAME_FIELD) ?? formData.get("username") ?? ""),
+  );
   if (!username) return { error: "USERNAME_REQUIRED" as const };
   const parsed = profileUpdateSchema.safeParse({
     displayName: String(formData.get("displayName") ?? "").trim(),
@@ -232,23 +265,16 @@ export async function updateProfileAction(formData: FormData) {
     bio: String(formData.get("bio") ?? "").trim() || null,
   });
   if (!parsed.success) return { error: "INVALID" as const };
-  const supabase = await createServerSupabase();
-  const { data: taken } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("username", parsed.data.username)
-    .neq("id", user.id)
-    .maybeSingle();
-  if (taken) return { error: "USERNAME_TAKEN" as const };
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      display_name: parsed.data.displayName,
+  try {
+    await convexMutation(api.profiles.edit, {
       username: parsed.data.username,
-      bio: parsed.data.bio,
-    })
-    .eq("id", user.id);
-  if (error) return { error: error.message };
+      displayName: parsed.data.displayName,
+      bio: parsed.data.bio ?? undefined,
+    });
+  } catch (error) {
+    if (convexErrorCode(error) === "USERNAME_TAKEN") return { error: "USERNAME_TAKEN" as const };
+    return { error: "INVALID" as const };
+  }
   revalidatePath("/", "layout");
   revalidatePath("/profile/edit");
   revalidatePath("/settings");
@@ -259,36 +285,30 @@ export async function updateProfileAction(formData: FormData) {
 }
 
 export async function completeOnboardingAction(input: unknown) {
-  const { user } = await requireUser();
-  const parsed = onboardingSchema.parse(input);
-  const supabase = await createServerSupabase();
-  await supabase
-    .from("user_preferences")
-    .update({
-      preferred_mood_ids: parsed.desiredMoodIds,
-      preferred_style_ids: parsed.styleIds,
-      preferred_visit_contexts: parsed.visitContexts,
-      budget_max: parsed.budgetMax ?? null,
-      typical_time_minutes: parsed.timeMinutes ?? null,
-    })
-    .eq("user_id", user.id);
-  await supabase
-    .from("profiles")
-    .update({ onboarding_completed_at: new Date().toISOString() })
-    .eq("id", user.id);
-  await recordProductEvent("onboarding_completed", {
-    mood_count: parsed.desiredMoodIds.length,
+  await requireUser();
+  const body = input as {
+    desiredMoodIds?: string[];
+    styleIds?: string[];
+    visitContexts?: string[];
+    budgetMax?: number;
+    timeMinutes?: number;
+  };
+  await convexMutation(api.profiles.completeOnboarding, {
+    preferredMoodIds: (body.desiredMoodIds ?? []) as Id<"moods">[],
+    preferredStyleIds: (body.styleIds ?? []) as Id<"experience_styles">[],
+    preferredVisitContexts: (body.visitContexts ?? []) as VisitContext[],
+    budgetMax: body.budgetMax,
+    typicalTimeMinutes: body.timeMinutes,
+  });
+  await track("onboarding_completed", {
+    mood_count: body.desiredMoodIds?.length ?? 0,
   });
   redirect("/home");
 }
 
 export async function skipOnboardingAction() {
-  const { user } = await requireUser();
-  const supabase = await createServerSupabase();
-  await supabase
-    .from("profiles")
-    .update({ onboarding_skipped_at: new Date().toISOString() })
-    .eq("id", user.id);
-  await recordProductEvent("onboarding_skipped", {});
+  await requireUser();
+  await convexMutation(api.profiles.skipOnboarding, {});
+  await track("onboarding_skipped");
   redirect("/home");
 }

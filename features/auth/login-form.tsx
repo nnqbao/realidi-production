@@ -2,12 +2,14 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { loginAction } from "@/features/auth/actions";
+import { useRouter } from "next/navigation";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { formText } from "@/features/auth/form-values";
+import { loginErrorCode } from "@/lib/convex/result";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordField } from "./password-field";
-import { createClient } from "@/lib/supabase/client";
 
 function loginErrorCopy(code: string | undefined): string {
   if (code === "LOCKED" || code === "RATE_LIMIT") {
@@ -19,9 +21,10 @@ function loginErrorCopy(code: string | undefined): string {
 }
 
 export function LoginForm({ nextPath }: { nextPath: string }) {
+  const { signIn } = useAuthActions();
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
   return (
     <div className="mx-auto max-w-md">
@@ -31,9 +34,17 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
         action={(formData) => {
           if (pending) return;
           start(async () => {
-            formData.set("next", nextPath);
-            const result = await loginAction(formData);
-            if (result?.error) setError(loginErrorCopy(result.error));
+            try {
+              await signIn("password", {
+                flow: "signIn",
+                email: formText(formData, "email"),
+                password: formText(formData, "password"),
+              });
+              router.push(nextPath);
+              router.refresh();
+            } catch (cause) {
+              setError(loginErrorCopy(loginErrorCode(cause)));
+            }
           });
         }}
       >
@@ -51,25 +62,6 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           {pending ? "Đang đăng nhập…" : "Đăng nhập"}
         </Button>
       </form>
-      {googleEnabled ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="mt-3 w-full"
-          disabled={pending}
-          onClick={async () => {
-            const supabase = createClient();
-            await supabase.auth.signInWithOAuth({
-              provider: "google",
-              options: {
-                redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-              },
-            });
-          }}
-        >
-          Tiếp tục với Google
-        </Button>
-      ) : null}
       <p className="mt-4 text-sm">
         <Link className="underline" href="/reset-password">
           Quên mật khẩu

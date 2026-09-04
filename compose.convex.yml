@@ -1,0 +1,69 @@
+name: realidi-convex
+
+services:
+  backend:
+    image: ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:3222:3210"
+      - "127.0.0.1:3223:3211"
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      CONVEX_CLOUD_ORIGIN: http://127.0.0.1:3222
+      CONVEX_SITE_ORIGIN: http://127.0.0.1:3223
+      DISABLE_BEACON: "true"
+      DISABLE_METRICS_ENDPOINT: "true"
+      REDACT_LOGS_TO_CLIENT: "true"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:3210/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # Tokens are issued with iss=http://127.0.0.1:3223 (the host site URL).
+  # The backend validates them by fetching that issuer's JWKS, but 3223 is
+  # only published on the host. Share the backend network namespace and
+  # forward container-localhost:3223 to the site process on 3211.
+  site-loopback:
+    image: alpine/socat:1.8.0.1@sha256:87d88ff79bf42ca723fb360e9585c40e2923a2f4df9b9d148b127568ef6b99e7
+    network_mode: service:backend
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    command: TCP-LISTEN:3223,fork,reuseaddr,bind=127.0.0.1 TCP:127.0.0.1:3211
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard@sha256:284a2638e0c1a4ec0c2327d8219776f3a426ca5824b81686ae4d9454dc0ce8ed
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:6799:6791"
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: http://127.0.0.1:3222
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
+    ports:
+      - "127.0.0.1:1026:1025"
+      - "127.0.0.1:8026:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - mailpit-data:/data
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  convex-data:
+  mailpit-data:

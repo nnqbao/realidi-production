@@ -1,6 +1,17 @@
-Migrations and seeds live next to the Supabase CLI:
+Convex Phases 0–2 provide the local migration foundation:
 
-- `supabase/migrations/` — schema, RLS, storage
-- `supabase/seed.sql` — HCMC taxonomy + editorial places
+- `convex/schema.ts` — domain tables, validators, and indexes
+- `convex/seed.ts` — idempotent taxonomy, configuration, and 22-place seed
+- `compose.convex.yml` — persistent loopback-only backend
 
-Apply with `supabase db reset` locally, or paste into the Supabase SQL editor on a hosted project.
+The application has not cut over: SQL migrations and `supabase/seed.sql`
+remain the current Supabase runtime source as well as parity evidence. The
+Convex schema/seed can be deployed and verified independently without creating
+a hybrid application data path.
+
+```bash
+./scripts/convex-local.sh up
+npm run convex:deploy:local
+npm run convex:seed
+npm run convex:verify
+```

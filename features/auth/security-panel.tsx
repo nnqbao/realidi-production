@@ -45,7 +45,7 @@ export function SecurityPanel({
                   toast.error("Bạn vừa gửi rồi. Đợi rồi thử lại.");
                   return;
                 }
-                toast.success("Nếu email hợp lệ, chúng tôi đã gửi lại liên kết xác minh.");
+                toast.success("Nếu email hợp lệ, chúng tôi đã gửi lại mã xác minh.");
               })
             }
           >

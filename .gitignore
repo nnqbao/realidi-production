@@ -41,6 +41,14 @@ yarn-error.log*
 .env.production
 !.env.example
 
+# local Convex runtime and evidence
+.env.convex
+.env.convex.local
+.convex/
+convex-export/
+convex-exports/
+local-evidence/
+
 # local supabase runtime
 supabase/.temp/
 supabase/.branches/

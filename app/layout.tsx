@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Be_Vietnam_Pro, Fraunces } from "next/font/google";
+import { ConvexAuthNextjsServerProvider } from "@convex-dev/auth/nextjs/server";
 import { Toaster } from "sonner";
+import { ConvexClientProvider } from "./ConvexClientProvider";
 import "./globals.css";
 
 const sans = Be_Vietnam_Pro({
@@ -30,15 +33,19 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="vi" className={`${sans.variable} ${display.variable} h-full antialiased`}>
       <body className="min-h-full bg-background font-sans text-foreground">
-        <a className="skip-link" href="#main">
-          Bỏ qua nội dung
-        </a>
-        {children}
-        <Toaster position="top-center" />
+        <ConvexAuthNextjsServerProvider>
+          <ConvexClientProvider>
+            <a className="skip-link" href="#main">
+              Bỏ qua nội dung
+            </a>
+            {children}
+            <Toaster position="top-center" />
+          </ConvexClientProvider>
+        </ConvexAuthNextjsServerProvider>
       </body>
     </html>
   );

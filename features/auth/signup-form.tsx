@@ -2,7 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { checkUsernameAvailable, resendVerificationAction, signUpAction } from "@/features/auth/actions";
+import { formText } from "@/features/auth/form-values";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +25,8 @@ function strengthLabel(password: string): { label: string; width: string } {
 }
 
 export function SignupForm() {
+  const { signIn } = useAuthActions();
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [needsEmail, setNeedsEmail] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -32,22 +37,59 @@ export function SignupForm() {
   if (needsEmail) {
     return (
       <div className="mx-auto max-w-md">
-        <h1 className="font-display text-3xl">Kiểm tra email</h1>
+        <h1 className="font-display text-3xl">Nhập mã xác minh</h1>
         <p className="mt-3 text-sm text-[#6F7480]">
-          Nếu địa chỉ hợp lệ, chúng tôi đã gửi liên kết xác nhận. Mở email rồi quay lại Realidi để hoàn tất.
+          Nếu địa chỉ hợp lệ, chúng tôi đã gửi mã 8 số. Mã hết hạn sau 15 phút và chỉ dùng một lần.
         </p>
+        <form
+          className="mt-6 space-y-4"
+          action={(formData) => {
+            if (pending) return;
+            start(async () => {
+              try {
+                await signIn("password", {
+                  flow: "email-verification",
+                  email: needsEmail,
+                  code: formText(formData, "code"),
+                });
+                router.push("/onboarding");
+                router.refresh();
+              } catch {
+                setError("Mã không đúng hoặc đã hết hạn. Thử lại hoặc gửi mã mới.");
+              }
+            });
+          }}
+        >
+          <div>
+            <Label htmlFor="code">Mã xác minh</Label>
+            <Input
+              id="code"
+              name="code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+              maxLength={8}
+              className="mt-1 tracking-[0.3em]"
+            />
+          </div>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <Button type="submit" className="w-full" disabled={pending}>
+            {pending ? "Đang xác minh…" : "Xác minh email"}
+          </Button>
+        </form>
         <Button
           type="button"
           variant="outline"
-          className="mt-6"
+          className="mt-4"
           disabled={pending}
           onClick={() =>
             start(async () => {
               await resendVerificationAction(needsEmail);
+              setError(null);
             })
           }
         >
-          {pending ? "Đang gửi…" : "Gửi lại email xác minh"}
+          {pending ? "Đang gửi…" : "Gửi lại mã"}
         </Button>
         <p className="mt-4 text-sm">
           <Link href="/login" className="underline">

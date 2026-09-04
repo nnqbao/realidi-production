@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { pingLastActive } from "./actions";
 import { mergePresenceTracks, resolvePresence } from "./format";
 import {
@@ -70,7 +71,7 @@ export function PresenceProvider({
   }, [showActivity, userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !isSupabaseConfigured()) return;
     const id = userId;
     const supabase = createClient();
     let cancelled = false;

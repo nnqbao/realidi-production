@@ -3,7 +3,8 @@
  *
  *   npx tsx scripts/seed-demo.ts
  *
- * Requires SUPABASE_SERVICE_ROLE_KEY in the environment.
+ * Opt-in only. Requires ENABLE_DEMO_SEED=true, SUPABASE_SERVICE_ROLE_KEY,
+ * and SEED_DEMO_CREDENTIALS_JSON in ignored local environment.
  */
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
@@ -41,12 +42,34 @@ const TAODAN = "44444444-4444-4444-8444-444444444005";
 const DINH = "44444444-4444-4444-8444-444444444007";
 const DECK = "44444444-4444-4444-8444-444444444015";
 
-const demoUsers = [
-  { email: "admin@felt.local", password: "FeltDemo!2026", username: "realidi", name: "Realidi", role: "admin" },
-  { email: "linh@felt.local", password: "FeltDemo!2026", username: "linhsaigon", name: "Linh Trần", role: "user" },
-  { email: "minh@felt.local", password: "FeltDemo!2026", username: "minhwander", name: "Minh Võ", role: "creator" },
-  { email: "an@felt.local", password: "FeltDemo!2026", username: "ancafe", name: "An Nguyễn", role: "user" },
-];
+if (process.env.ENABLE_DEMO_SEED !== "true") {
+  console.error("Demo seed is disabled. Set ENABLE_DEMO_SEED=true explicitly.");
+  process.exit(1);
+}
+
+type DemoCredentials = Record<string, { email: string; password: string }>;
+let credentials: DemoCredentials;
+try {
+  credentials = JSON.parse(process.env.SEED_DEMO_CREDENTIALS_JSON ?? "") as DemoCredentials;
+} catch {
+  console.error("SEED_DEMO_CREDENTIALS_JSON must be valid JSON in ignored local environment.");
+  process.exit(1);
+}
+
+const demoProfiles = [
+  { username: "realidi", name: "Realidi", role: "admin" },
+  { username: "linhsaigon", name: "Linh Trần", role: "user" },
+  { username: "minhwander", name: "Minh Võ", role: "creator" },
+  { username: "ancafe", name: "An Nguyễn", role: "user" },
+] as const;
+
+const demoUsers = demoProfiles.map((profile) => {
+  const supplied = credentials[profile.username];
+  if (!supplied?.email || !supplied.password || supplied.password.length < 8) {
+    throw new Error(`Missing valid ignored credentials for demo profile ${profile.username}`);
+  }
+  return { ...profile, ...supplied };
+});
 
 const bios: Record<string, string> = {
   realidi: "Tài khoản chính thức của Realidi.",
@@ -88,7 +111,7 @@ async function main() {
   const minh = ids.minhwander;
   const an = ids.ancafe;
   if (!linh || !minh || !an) {
-    console.log("Users ready (or already existed). Profiles:", ids);
+    console.log("Demo users are ready or already existed.");
   }
 
   const posts = [
@@ -207,7 +230,7 @@ async function main() {
     await admin.from("saves").upsert({ user_id: minh, place_id: TAODAN });
   }
 
-  console.log("Demo seed complete. Staff: admin@felt.local");
+  console.log("Demo seed complete.");
 }
 
 main().catch((err) => {

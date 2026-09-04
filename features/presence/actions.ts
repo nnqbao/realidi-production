@@ -1,11 +1,15 @@
 "use server";
 
+import { api } from "@/convex/_generated/api";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { convexMutation } from "@/lib/convex/server";
 import { requireUser } from "@/lib/auth/session";
 import { recordProductEvent } from "@/features/social/actions";
 import { LAST_ACTIVE_PING_MS } from "./types";
 
 export async function pingLastActive() {
+  if (!isSupabaseConfigured()) return;
   const { user } = await requireUser();
   const supabase = await createServerSupabase();
   const { data } = await supabase.from("profiles").select("last_active_at").eq("id", user.id).maybeSingle();
@@ -17,10 +21,16 @@ export async function pingLastActive() {
 }
 
 export async function setShowActivityStatus(enabled: boolean) {
-  const { user } = await requireUser();
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.from("profiles").update({ show_activity_status: enabled }).eq("id", user.id);
-  if (error) return { error: error.message, enabled: !enabled };
-  await recordProductEvent(enabled ? "activity_status_enabled" : "activity_status_disabled");
+  await requireUser();
+  try {
+    await convexMutation(api.profiles.setActivityStatus, { enabled });
+  } catch {
+    return { error: "SAVE_FAILED", enabled: !enabled };
+  }
+  try {
+    await recordProductEvent(enabled ? "activity_status_enabled" : "activity_status_disabled");
+  } catch {
+    // Analytics is optional during the Convex auth cutover.
+  }
   return { enabled };
 }

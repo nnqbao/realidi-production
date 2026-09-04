@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { resetPasswordAction } from "@/features/auth/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import Link from "next/link";
 
 export default function ResetPasswordPage() {
+  const router = useRouter();
   const [done, setDone] = useState(false);
   const [pending, start] = useTransition();
   return (
@@ -19,15 +21,17 @@ export default function ResetPasswordPage() {
         <h1 className="font-display text-3xl">Đặt lại mật khẩu</h1>
         {done ? (
           <p className="mt-4 text-sm text-[#6F7480]">
-            Nếu email tồn tại trên Realidi, chúng tôi đã gửi hướng dẫn. Liên kết chỉ dùng được một lần và sẽ hết hạn.
+            Nếu email tồn tại trên Realidi, chúng tôi đã gửi mã 8 số. Mã chỉ dùng một lần và hết hạn sau 15 phút.
           </p>
         ) : (
           <form
             className="mt-6 space-y-4"
             action={(formData) =>
               start(async () => {
+                const email = String(formData.get("email") ?? "");
                 await resetPasswordAction(formData);
                 setDone(true);
+                router.push(`/reset-password/update?email=${encodeURIComponent(email)}`);
               })
             }
           >

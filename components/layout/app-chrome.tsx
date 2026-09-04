@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, MessageCircle, Search } from "lucide-react";
-import { logoutAction } from "@/features/auth/actions";
+import { LogoutButton } from "@/features/auth/logout-button";
 import { Button } from "@/components/ui/button";
 import { PresenceProvider } from "@/features/presence/provider";
 import { UserAvatar } from "@/components/ui/user-avatar";
@@ -106,11 +106,7 @@ export function AppChrome({
                   <span className="block truncate text-xs text-muted-foreground">@{session.profile.username}</span>
                 </span>
               </Link>
-              <form action={logoutAction}>
-                <Button variant="ghost" className="w-full justify-start" type="submit">
-                  Đăng xuất
-                </Button>
-              </form>
+              <LogoutButton />
               <Link href="/settings" className="px-2 text-xs text-muted-foreground underline">
                 Cài đặt
               </Link>

@@ -1,48 +1,71 @@
-import { createServerSupabase } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { api } from "@/convex/_generated/api";
+import { isConvexConfigured } from "@/lib/convex/env";
+import { convexQuery, convexToken } from "@/lib/convex/server";
 import type { Profile } from "@/types/database";
-import type { User } from "@supabase/supabase-js";
 import { accountGate, type AccountGate } from "./account";
-import type { UserRole } from "./roles";
+
+export type SessionAuthUser = {
+  id: string;
+  email: string;
+  email_confirmed_at: string | null;
+};
 
 export type SessionUser = {
-  user: User;
+  user: SessionAuthUser;
   profile: Profile;
   gate: AccountGate;
 };
 
-async function maybeBootstrapOwner(user: User, profile: Profile): Promise<Profile> {
-  const email = process.env.INITIAL_OWNER_EMAIL?.trim().toLowerCase();
-  if (!email || user.email?.toLowerCase() !== email) return profile;
-  if (profile.role === "owner") return profile;
-  try {
-    const admin = createAdminClient();
-    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).eq("role", "owner");
-    if ((count ?? 0) > 0) return profile;
-    await admin.from("profiles").update({ role: "owner" as UserRole }).eq("id", user.id);
-    return { ...profile, role: "owner" };
-  } catch {
-    return profile;
-  }
+function iso(value: number | undefined): string | null {
+  return value === undefined ? null : new Date(value).toISOString();
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
-  if (!isSupabaseConfigured()) return null;
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if (!profile) return null;
-  const nextProfile = await maybeBootstrapOwner(user, profile as Profile);
-  const gate = accountGate(nextProfile, Boolean(user.email_confirmed_at));
-  if (gate === "deleted" || gate === "banned" || gate === "suspended") {
-    await supabase.auth.signOut({ scope: "local" });
+  if (!isConvexConfigured()) return null;
+  const token = await convexToken();
+  if (!token) return null;
+  const current = await convexQuery(api.profiles.current, {}, token);
+  if (current === null) return null;
+  if (current.gate === "deleted" || current.gate === "banned" || current.gate === "suspended") {
     return null;
   }
-  return { user, profile: nextProfile, gate };
+
+  const profile: Profile = {
+    id: current.id,
+    username: current.username,
+    display_name: current.displayName,
+    bio: current.bio ?? null,
+    avatar_path: current.avatarUrl ?? null,
+    role: current.role,
+    locale: current.locale,
+    timezone: current.timezone,
+    home_city: current.homeCity ?? null,
+    onboarding_completed_at: iso(current.onboardingCompletedAt),
+    onboarding_skipped_at: iso(current.onboardingSkippedAt),
+    last_seen_at: null,
+    last_active_at: null,
+    show_activity_status: current.showActivityStatus,
+    created_at: iso(current.createdAt) ?? new Date(0).toISOString(),
+    updated_at: iso(current.createdAt) ?? new Date(0).toISOString(),
+    deleted_at: null,
+    suspended_at: null,
+    banned_at: null,
+    ban_reason: null,
+    suspension_ends_at: null,
+    deletion_requested_at: null,
+    warned_at: null,
+  };
+
+  const gate = accountGate(profile, current.emailVerified);
+  return {
+    user: {
+      id: current.id,
+      email: current.email ?? "",
+      email_confirmed_at: current.emailVerified ? new Date().toISOString() : null,
+    },
+    profile,
+    gate,
+  };
 }
 
 export async function requireUser(): Promise<SessionUser> {

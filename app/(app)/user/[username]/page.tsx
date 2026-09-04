@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { api } from "@/convex/_generated/api";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { convexQuery } from "@/lib/convex/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { Button } from "@/components/ui/button";
 import { FollowButton } from "@/features/social/follow-button";
@@ -34,6 +37,36 @@ export default async function UserPage({
 }) {
   const { username } = await params;
   const { tab = "posts" } = await searchParams;
+  const convexPerson = await convexQuery(api.profiles.publicProfile, { username }).catch(() => null);
+  if (convexPerson) {
+    const session = await getSessionUser().catch(() => null);
+    const isMe = session?.profile.username === convexPerson.username;
+    return (
+      <div className="px-4 py-4">
+        <header className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <ProfileIdentity
+              person={{
+                id: convexPerson.id,
+                display_name: convexPerson.displayName,
+                username: convexPerson.username,
+                avatar_path: convexPerson.avatarUrl,
+                bio: convexPerson.bio ?? null,
+                home_city: convexPerson.homeCity ?? null,
+              }}
+            />
+          </div>
+          {isMe ? (
+            <Button asChild variant="outline">
+              <Link href="/profile/edit">Sửa hồ sơ</Link>
+            </Button>
+          ) : null}
+        </header>
+        <EmptyState className="mt-6" title="Chưa có bài viết công khai" />
+      </div>
+    );
+  }
+  if (!isSupabaseConfigured()) notFound();
   const supabase = await createServerSupabase();
   const { data: profile } = await supabase
     .from("profiles")
