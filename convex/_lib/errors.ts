@@ -8,7 +8,8 @@ export type DomainErrorCode =
   | "INVALID_DISPLAY_NAME" | "INVALID_BIO" | "INVALID_LOCALE"
   | "INVALID_TIMEZONE" | "INVALID_HOME_CITY" | "INVALID_MOOD"
   | "INVALID_STYLE" | "INVALID_BUDGET" | "INVALID_DURATION"
-  | "INVALID_PASSWORD" | "INVALID_CREDENTIALS" | "RATE_LIMITED";
+  | "INVALID_PASSWORD" | "INVALID_CREDENTIALS" | "RATE_LIMITED"
+  | "MUST_CHANGE_PASSWORD";
 
 export function fail(code: DomainErrorCode, message: string): never {
   throw new ConvexError({ code, message });

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth/session";
 import { isStaff } from "@/lib/auth/roles";
 import { getDesiredMoods } from "@/features/mood/queries";
@@ -9,6 +10,9 @@ import { AppChrome } from "./app-chrome";
 
 export async function AppShell({ children }: { children: ReactNode }) {
   const session = await getSessionUser().catch(() => null);
+  if (session?.mustChangePassword) {
+    redirect("/change-password");
+  }
   const [unread, messageUnread, people, places, moods] = await Promise.all([
     getUnreadNotificationCount().catch(() => 0),
     getUnreadMessageCount().catch(() => 0),

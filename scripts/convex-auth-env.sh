@@ -3,6 +3,14 @@ set -euo pipefail
 umask 077
 
 cd "$(dirname "$0")/.."
+
+if [[ -f .env.local ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env.local
+  set +a
+fi
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/realidi-auth.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -37,8 +45,15 @@ NODE
   npx convex env set JWKS < "$tmp_dir/jwks" >/dev/null
 fi
 
-printf '%s' 'http://localhost:3000' | npx convex env set SITE_URL >/dev/null
-printf '%s' 'mailpit' | npx convex env set SMTP_HOST >/dev/null
-printf '%s' '1025' | npx convex env set SMTP_PORT >/dev/null
-printf '%s' 'Realidi <no-reply@realidi.local>' | npx convex env set SMTP_FROM >/dev/null
-printf 'Convex Auth environment is configured without exposing key material.\n'
+site_url="${SITE_URL:-${APP_URL:-${NEXT_PUBLIC_APP_URL:-http://127.0.0.1:3020}}}"
+printf '%s' "$site_url" | npx convex env set SITE_URL >/dev/null
+
+smtp_host="${SMTP_HOST:-}"
+if [[ -n "$smtp_host" && "$smtp_host" != "mailpit" && "$smtp_host" != "127.0.0.1" && "$smtp_host" != "localhost" ]]; then
+  printf '%s' "$smtp_host" | npx convex env set SMTP_HOST >/dev/null
+  printf '%s' "${SMTP_PORT:-587}" | npx convex env set SMTP_PORT >/dev/null
+  printf '%s' "${SMTP_FROM:-Realidi <no-reply@realidi.local>}" | npx convex env set SMTP_FROM >/dev/null
+  printf 'Convex Auth environment is configured with SMTP.\n'
+else
+  printf 'Convex Auth keys and SITE_URL are configured. SMTP was skipped (Convex Cloud cannot reach local Mailpit).\n'
+fi

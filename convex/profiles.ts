@@ -172,6 +172,7 @@ export const current = query({
       onboardingSkippedAt: profile.onboarding_skipped_at,
       email: profile.email_normalized,
       emailVerified: user.emailVerificationTime !== undefined,
+      mustChangePassword: profile.must_change_password === true,
       gate: gateFor(profile, user.emailVerificationTime !== undefined, Date.now()),
       avatarUrl:
         profile.avatar_storage_id === undefined

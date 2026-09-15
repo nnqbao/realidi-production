@@ -14,6 +14,7 @@ export type SessionUser = {
   user: SessionAuthUser;
   profile: Profile;
   gate: AccountGate;
+  mustChangePassword: boolean;
 };
 
 function iso(value: number | undefined): string | null {
@@ -65,6 +66,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     },
     profile,
     gate,
+    mustChangePassword: current.mustChangePassword === true,
   };
 }
 

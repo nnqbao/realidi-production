@@ -235,6 +235,7 @@ export async function changePasswordAction(formData: FormData) {
     return { error: "INVALID" as const };
   }
   revalidatePath("/settings");
+  revalidatePath("/change-password");
   return { ok: true as const };
 }
 

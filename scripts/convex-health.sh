@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-curl --fail --silent --show-error http://127.0.0.1:3222/version >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:6799/ >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:8026/api/v1/info >/dev/null
+cd "$(dirname "$0")/.."
 
-for port in 3222 3223 6799 1026 8026; do
-  if ! lsof -nP -iTCP:"$port" -sTCP:LISTEN | grep -q '127.0.0.1'; then
-    printf 'Port %s is not bound to IPv4 loopback.\n' "$port" >&2
-    exit 1
-  fi
-done
+if [[ -f .env.local ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env.local
+  set +a
+fi
 
-printf 'Convex backend, dashboard, and Mailpit are healthy and loopback-bound.\n'
+url="${NEXT_PUBLIC_CONVEX_URL:-}"
+site="${NEXT_PUBLIC_CONVEX_SITE_URL:-}"
+if [[ -z "$url" || -z "$site" ]]; then
+  printf 'Missing NEXT_PUBLIC_CONVEX_URL or NEXT_PUBLIC_CONVEX_SITE_URL.\n' >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --max-time 10 "${url%/}/version" >/dev/null \
+  || curl --fail --silent --show-error --max-time 10 "$url" >/dev/null
+curl --fail --silent --show-error --max-time 10 \
+  "${site%/}/.well-known/openid-configuration" >/dev/null
+
+printf 'Convex Cloud backend and auth issuer are healthy.\n'

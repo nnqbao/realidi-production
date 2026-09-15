@@ -28,6 +28,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!session) {
     redirect("/login?next=/admin");
   }
+  if (session.mustChangePassword) {
+    redirect("/change-password");
+  }
   if (!isStaff(session.profile.role)) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16">

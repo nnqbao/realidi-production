@@ -12,6 +12,8 @@ import { action, internalMutation, internalQuery } from "./_generated/server";
 import { appendAudit } from "./_lib/audit";
 import { fail } from "./_lib/errors";
 import { isSuspended } from "./_lib/time";
+import { normalizeEmail } from "./authLockout";
+import { provisionProfile } from "./profiles";
 import {
   PASSWORD_POLICY_ERROR,
   PASSWORD_PROVIDER,
@@ -55,13 +57,20 @@ export const recordPasswordChange = internalMutation({
     signedOutOthers: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const now = Date.now();
+    if (args.profileId !== null) {
+      await ctx.db.patch(args.profileId, {
+        must_change_password: false,
+        updated_at: now,
+      });
+    }
     await appendAudit(ctx, {
       ...(args.profileId === null ? {} : { actor_id: args.profileId }),
       action: "account.password_changed",
       target_type: "profile",
       ...(args.profileId === null ? {} : { target_id: args.profileId }),
       after: { signed_out_other_sessions: args.signedOutOthers },
-      created_at: Date.now(),
+      created_at: now,
     });
   },
 });
@@ -185,5 +194,99 @@ export const requestDeletion = action({
     });
     await invalidateSessions(ctx, { userId: authUserId });
     return { ok: true as const };
+  },
+});
+
+/**
+ * CLI-only: create or update a verified owner/admin and require a password
+ * change on the next product or admin action. The secret is a Scrypt hash,
+ * never the plaintext password.
+ */
+export const applyBootstrapOwner = internalMutation({
+  args: {
+    email: v.string(),
+    secret: v.string(),
+    displayName: v.optional(v.string()),
+    role: v.optional(v.union(v.literal("owner"), v.literal("admin"))),
+  },
+  handler: async (ctx, args) => {
+    const email = normalizeEmail(args.email);
+    const now = Date.now();
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", email))
+      .first();
+
+    let authUserId = existingUser?._id;
+    if (authUserId === undefined) {
+      authUserId = await ctx.db.insert("users", {
+        email,
+        emailVerificationTime: now,
+        ...(args.displayName === undefined ? {} : { name: args.displayName }),
+      });
+      await ctx.db.insert("authAccounts", {
+        userId: authUserId,
+        provider: PASSWORD_PROVIDER,
+        providerAccountId: email,
+        secret: args.secret,
+        emailVerified: email,
+      });
+    } else {
+      if (existingUser!.emailVerificationTime === undefined) {
+        await ctx.db.patch(authUserId, { emailVerificationTime: now });
+      }
+      const account = await ctx.db
+        .query("authAccounts")
+        .withIndex("userIdAndProvider", (q) =>
+          q.eq("userId", authUserId!).eq("provider", PASSWORD_PROVIDER))
+        .unique();
+      if (account === null) {
+        await ctx.db.insert("authAccounts", {
+          userId: authUserId,
+          provider: PASSWORD_PROVIDER,
+          providerAccountId: email,
+          secret: args.secret,
+          emailVerified: email,
+        });
+      } else {
+        await ctx.db.patch(account._id, {
+          secret: args.secret,
+          emailVerified: email,
+        });
+      }
+    }
+
+    const profile = await provisionProfile(ctx, {
+      authUserId,
+      email,
+      name: args.displayName,
+      now,
+    });
+    const role = args.role ?? "owner";
+    if (profile.role === "owner" && role !== "owner") {
+      fail("FORBIDDEN", "Cannot demote an owner via bootstrap");
+    }
+    const beforeRole = profile.role;
+    await ctx.db.patch(profile._id, {
+      role,
+      must_change_password: true,
+      onboarding_completed_at: profile.onboarding_completed_at ?? now,
+      updated_at: now,
+    });
+    await appendAudit(ctx, {
+      actor_id: profile._id,
+      action: role === "owner" ? "owner.provision" : "admin.provision",
+      target_type: "profile",
+      target_id: profile._id,
+      before: { role: beforeRole },
+      after: { role, must_change_password: true },
+      created_at: now,
+    });
+    return {
+      profileId: profile._id,
+      created: existingUser === null,
+      role,
+      mustChangePassword: true,
+    };
   },
 });

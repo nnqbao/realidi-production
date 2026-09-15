@@ -2,17 +2,19 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-compose=(docker compose -f compose.convex.yml)
+compose=(docker compose -p realidi-convex -f compose.convex.yml)
 
 case "${1:-}" in
   up)
-    "${compose[@]}" up -d --wait
+    printf 'Realidi local Convex Docker is retired. Live backend is Convex Cloud.\n' >&2
+    printf 'Refusing to start compose.convex.yml so other Docker projects stay untouched.\n' >&2
+    exit 1
     ;;
   down)
     "${compose[@]}" down
     ;;
   status)
-    "${compose[@]}" ps
+    "${compose[@]}" ps -a
     ;;
   logs)
     "${compose[@]}" logs --follow

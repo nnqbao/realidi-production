@@ -7,8 +7,9 @@ const ROUTES = [
   "/admin/places", "/admin/places/[id]", "/admin/places/new", "/admin/posts",
   "/admin/ranking", "/admin/reports", "/admin/seed", "/admin/settings",
   "/admin/users", "/admin/verifications", "/api/events", "/api/feed",
-  "/auth/callback", "/create", "/discover", "/experience/[id]", "/explore",
-  "/home", "/login", "/map", "/me", "/messages", "/messages/[id]",
+  "/auth/callback", "/change-password", "/create", "/discover",
+  "/experience/[id]", "/explore", "/home", "/login", "/map", "/me",
+  "/messages", "/messages/[id]",
   "/notifications", "/onboarding", "/place/[slug]", "/post/[id]", "/privacy",
   "/profile/edit", "/reset-password", "/reset-password/update", "/saved",
   "/search", "/settings", "/signup", "/terms", "/user/[username]",
@@ -35,7 +36,7 @@ const AUTH_ACTION_EXPORTS = [
 
 describe("route surface contract", () => {
   it("freezes every current page and route handler", () => {
-    expect(ROUTES).toHaveLength(46);
+    expect(ROUTES).toHaveLength(47);
     for (const route of ROUTES) {
       expect(existsSync(routeFile(route)), `${route} -> ${routeFile(route)}`).toBe(true);
     }

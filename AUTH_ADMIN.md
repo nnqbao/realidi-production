@@ -18,26 +18,28 @@ requires re-checking that file.
 | --- | --- |
 | Register, sign in, verify, reset | `auth:signIn` flows `signUp`, `signIn`, `email-verification`, `reset`, `reset-verification` |
 | Sign out the current session | `auth:signOut` |
-| Change password | `account:changePassword` |
+| Change password | `account:changePassword` (clears `must_change_password`) |
 | List sessions | `sessions:list` |
 | Revoke other / all / one session | `sessions:revokeOthers`, `sessions:revokeAll`, `sessions:revoke` |
 | Current profile and account gate | `profiles:current` |
 
 One-time codes are 8 digits, expire after 15 minutes, are stored only as a
-SHA-256 hash, and are delivered out of band through Mailpit. A code issued for
+SHA-256 hash, and are delivered out of band through SMTP. A code issued for
 a reset cannot be redeemed to verify an address, or the reverse.
 
-## Local services
+## Convex Cloud
 
-Start `./scripts/convex-local.sh up`, generate the ignored admin key with
-`./scripts/convex-admin-key.sh`, then run `npm run convex:deploy:local`.
-`./scripts/convex-auth-env.sh` writes the signing key pair, `SITE_URL`, and the
-Mailpit SMTP settings into the deployment environment without printing them.
+Live backend is Convex Cloud (`prod:zany-lyrebird-546`). Put
+`CONVEX_DEPLOY_KEY` in ignored `.env.local`, then run
+`./scripts/convex-auth-env.sh` and `npm run convex:deploy`.
+`./scripts/convex-auth-env.sh` writes the signing key pair and `SITE_URL`
+without printing them. It does not point SMTP at Mailpit: Convex Cloud
+actions cannot reach the local container.
+
 Auth requires `JWT_PRIVATE_KEY`, `JWKS`, and `SITE_URL` to be present; verify
-with `curl --fail http://127.0.0.1:3223/.well-known/openid-configuration`.
-The Compose `site-loopback` sidecar makes that same issuer reachable from
-inside the backend container so JWT validation does not fail with
-`AuthProviderDiscoveryFailed`.
+with `curl --fail https://zany-lyrebird-546.convex.site/.well-known/openid-configuration`.
+
+The local Compose stack is retired. Do not run `./scripts/convex-local.sh up`.
 
 ## First Owner
 
@@ -51,15 +53,22 @@ transaction against the address held by the auth account, never against
 client-supplied metadata, and it is skipped entirely once any owner exists.
 The promotion writes an `owner.bootstrap` audit row.
 
+A bootstrap owner or admin created through
+`internal.accountNode.provisionBootstrapOwner` is verified immediately, granted
+the requested staff role, and flagged `must_change_password`.
+The first sign-in can obtain a session, but product and `/admin` actions fail
+`requireVerifiedProfile` until `account.changePassword` succeeds. The Next
+app sends that session to `/change-password`.
+
 Never commit that email into source. Do not hard-code demo passwords.
 
 ## Email
 
-The Convex backend sends through `SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`, which
-point at the Mailpit container locally. Read delivered mail at
-<http://127.0.0.1:8026>. Sends are scheduled rather than awaited, so a request
-takes the same time whether or not an address exists; a delivery failure is
-visible only in the Convex logs and in Mailpit, never in the API response.
+The Convex backend sends through `SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`. Those
+must be a reachable internet SMTP server. Sends are scheduled rather than
+awaited, so a request takes the same time whether or not an address exists;
+a delivery failure is visible only in the Convex logs, never in the API
+response.
 
 Code requests are throttled to 3 per address per 15 minutes per purpose
 (`auth_code_requests`) so the endpoints cannot be used to flood an inbox. A
@@ -96,7 +105,7 @@ Checks run in Convex (`convex/_lib/authz.ts`) and `/admin` layout. Frontend hidi
 ## Deploy checklist
 
 - [ ] `APP_URL` and `NEXT_PUBLIC_APP_URL` are the real production origin
-- [ ] Self-hosted Convex healthy and functions deployed
+- [ ] Convex Cloud healthy and functions deployed
 - [ ] `INITIAL_OWNER_EMAIL` used once, then reviewed
 - [ ] SMTP + email confirmations on
 - [ ] Google OAuth remains disabled

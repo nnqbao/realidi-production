@@ -28,6 +28,7 @@ import type * as _lib_uniqueness from "../_lib/uniqueness.js";
 import type * as _providers_EmailOtp from "../_providers/EmailOtp.js";
 import type * as _providers_Password from "../_providers/Password.js";
 import type * as account from "../account.js";
+import type * as accountNode from "../accountNode.js";
 import type * as admin from "../admin.js";
 import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
@@ -89,6 +90,7 @@ declare const fullApi: ApiFromModules<{
   "_providers/EmailOtp": typeof _providers_EmailOtp;
   "_providers/Password": typeof _providers_Password;
   account: typeof account;
+  accountNode: typeof accountNode;
   admin: typeof admin;
   analytics: typeof analytics;
   auth: typeof auth;

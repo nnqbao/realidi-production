@@ -22,6 +22,7 @@ export type AuthorizedProfile = Pick<
   | "banned_at"
   | "suspended_at"
   | "suspension_ends_at"
+  | "must_change_password"
 >;
 
 export type AuthorizedIdentity = {
@@ -67,6 +68,11 @@ export async function requireVerifiedProfile(
   const identity = await requireActiveProfile(ctx, now);
   const user = await ctx.db.get(identity.authUserId) as { emailVerificationTime?: number } | null;
   invariant(user?.emailVerificationTime !== undefined, "EMAIL_UNVERIFIED", "Email verification required");
+  invariant(
+    identity.profile.must_change_password !== true,
+    "MUST_CHANGE_PASSWORD",
+    "Password change required",
+  );
   return identity;
 }
 

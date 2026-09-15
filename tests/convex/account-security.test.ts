@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { api } from "@/convex/_generated/api";
+import { api, internal } from "@/convex/_generated/api";
+import { requireVerifiedProfile } from "@/convex/_lib/authz";
 import { GENERIC_AUTH_ERROR } from "@/convex/_providers/Password";
 import {
   authHarness,
   authUserId,
+  latestSessionId,
   PASSWORD,
   signInWithPassword,
   signUp,
@@ -136,6 +138,25 @@ describe("password change", () => {
     }
   });
 
+  it("clears the first-login password-change flag", async () => {
+    const t = authHarness();
+    const user = await verifiedUser(t, "porter@example.test");
+    await t.run(async (ctx) => {
+      await ctx.db.patch(user.profileId, { must_change_password: true });
+    });
+    expect((await user.client.query(api.profiles.current, {}))?.mustChangePassword)
+      .toBe(true);
+
+    await user.client.action(api.account.changePassword, {
+      currentPassword: PASSWORD,
+      newPassword: NEW_PASSWORD,
+      signOutOtherSessions: false,
+    });
+
+    expect((await user.client.query(api.profiles.current, {}))?.mustChangePassword)
+      .toBe(false);
+  });
+
   it("records the change in the audit trail without the passwords", async () => {
     const t = authHarness();
     const user = await verifiedUser(t, "porter@example.test");
@@ -254,5 +275,69 @@ describe("session revocation", () => {
     // The target session survived the attempt.
     expect((await other.client.query(api.sessions.list, {})).map((s) => s.id))
       .toEqual([other.sessionId]);
+  });
+});
+
+describe("bootstrap owner provision", () => {
+  const bootstrapPassword = "bootstrap-pass-1";
+
+  it("creates a verified owner that must change password before product use", async () => {
+    const t = authHarness();
+    const result = await t.action(internal.accountNode.provisionBootstrapOwner, {
+      email: "founder@example.test",
+      password: bootstrapPassword,
+      displayName: "Founder",
+    });
+    expect(result).toMatchObject({
+      created: true,
+      role: "owner",
+      mustChangePassword: true,
+    });
+
+    await expect(signInWithPassword(t, "founder@example.test", bootstrapPassword))
+      .resolves.toBeTruthy();
+
+    const authId = await authUserId(t, "founder@example.test");
+    const account = await t.run(async (ctx) =>
+      ctx.db
+        .query("authAccounts")
+        .withIndex("userIdAndProvider", (q) =>
+          q.eq("userId", authId).eq("provider", "password"))
+        .unique());
+    expect(account?.emailVerified).toBe("founder@example.test");
+    await expect(latestSessionId(t, authId)).resolves.toBeTruthy();
+    const client = t.withIdentity({ subject: `${authId}|unused-session` });
+    const current = await client.query(api.profiles.current, {});
+    expect(current?.role).toBe("owner");
+    expect(current?.emailVerified).toBe(true);
+    expect(current?.mustChangePassword).toBe(true);
+    await expect(client.run((ctx) => requireVerifiedProfile(ctx))).rejects.toThrow();
+
+    const audit = await t.run(async (ctx) =>
+      (await ctx.db.query("audit_logs").collect())
+        .filter((row) => row.action === "owner.provision"));
+    expect(audit).toHaveLength(1);
+    expect(JSON.stringify(audit)).not.toContain(bootstrapPassword);
+  });
+
+  it("can provision a verified admin that must change password", async () => {
+    const t = authHarness();
+    const result = await t.action(internal.accountNode.provisionBootstrapOwner, {
+      email: "staff@example.test",
+      password: bootstrapPassword,
+      displayName: "Staff",
+      role: "admin",
+    });
+    expect(result).toMatchObject({
+      created: true,
+      role: "admin",
+      mustChangePassword: true,
+    });
+
+    const authId = await authUserId(t, "staff@example.test");
+    const client = t.withIdentity({ subject: `${authId}|unused-session` });
+    const current = await client.query(api.profiles.current, {});
+    expect(current?.role).toBe("admin");
+    expect(current?.mustChangePassword).toBe(true);
   });
 });

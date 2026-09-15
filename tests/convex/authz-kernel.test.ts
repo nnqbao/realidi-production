@@ -68,4 +68,12 @@ describe("authorization kernel", () => {
       await expect(owner.client.run((ctx) => requireOwner(ctx, 100))).rejects.toThrow();
     }
   });
+
+  it("rejects a verified profile that still must change its password", async () => {
+    const owner = await principal("owner");
+    await owner.client.run(async (ctx) => {
+      await ctx.db.patch(owner.profileId, { must_change_password: true });
+    });
+    await expect(owner.client.run((ctx) => requireOwner(ctx, 100))).rejects.toThrow();
+  });
 });
