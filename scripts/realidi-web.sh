@@ -4,7 +4,7 @@ set -euo pipefail
 readonly ROOT="/Users/vsc_agent/projects/realidi"
 readonly PORT="${REALIDI_PORT:-3020}"
 readonly HOST="${REALIDI_HOST:-127.0.0.1}"
-readonly NODE_BIN="/Users/vsc_agent/.nvm/versions/node/v22.23.0/bin"
+readonly NODE_BIN="/Users/vsc_agent/.nvm/versions/node/v22.23.4/bin"
 readonly WAIT_SEC=180
 
 export PATH="${NODE_BIN}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
